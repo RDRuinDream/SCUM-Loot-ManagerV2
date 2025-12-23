@@ -11,7 +11,8 @@ export type TranslationCategory = 'item' | 'node' | 'file' | 'global' | 'setting
 
 export interface TranslationEntry {
     text: string;
-    categories: TranslationCategory[]; // Changed from single category to array
+    categories: TranslationCategory[];
+    masked?: boolean; // New flag: if true, this entry effectively "deletes" a default translation
 }
 
 export interface TranslationData {
@@ -20,7 +21,7 @@ export interface TranslationData {
 
 const STORAGE_KEY_V1 = 'scum_translations';
 const STORAGE_KEY_V2 = 'scum_translations_v2'; 
-const STORAGE_KEY_V3 = 'scum_translations_v3'; // Bump version for new structure
+const STORAGE_KEY_V3 = 'scum_translations_v3'; 
 const UPDATE_EVENT = 'scum_translations_updated';
 
 // In-memory lookup maps
@@ -50,33 +51,11 @@ const loadTranslations = () => {
 
     globalMap = {}; 
 
-    // 2. Migration Logic
+    // 2. Migration Logic (Simplified for V3 existing)
     try {
         const v3Stored = localStorage.getItem(STORAGE_KEY_V3);
-        const v2Stored = localStorage.getItem(STORAGE_KEY_V2);
-        const v1Stored = localStorage.getItem(STORAGE_KEY_V1);
-
         if (v3Stored) {
             customData = JSON.parse(v3Stored);
-        } else if (v2Stored) {
-            // Upgrade V2 to V3 (Single category -> Array)
-            const v2Data = JSON.parse(v2Stored);
-            customData = {};
-            Object.entries(v2Data).forEach(([k, v]: [string, any]) => {
-                customData[k] = { 
-                    text: v.text, 
-                    categories: v.category === 'global' ? ['global'] : [v.category] 
-                };
-            });
-            localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
-        } else if (v1Stored) {
-            // Upgrade V1 to V3
-            const v1Data = JSON.parse(v1Stored);
-            customData = {};
-            Object.entries(v1Data).forEach(([k, v]) => {
-                customData[k] = { text: String(v), categories: ['global'] };
-            });
-            localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
         } else {
             customData = {};
         }
@@ -85,23 +64,26 @@ const loadTranslations = () => {
         customData = {};
     }
 
-    // 3. Populate Maps based on active categories
+    // 3. Populate Maps based on custom data overrides
     Object.entries(customData).forEach(([key, entry]) => {
-        const { text, categories } = entry;
+        const { text, categories, masked } = entry;
         
+        // If masked, we map it to the key itself (or empty string for descriptions) to simulate deletion
+        const effectiveText = masked ? (categories.includes('setting_desc') ? "" : key) : text;
+
         if (categories.includes('global')) {
-            globalMap[key] = text;
-            itemMap[key] = text;
-            nodeMap[key] = text;
-            fileMap[key] = text;
-            settingsMap[key] = text;
-            settingDescMap[key] = text;
+            globalMap[key] = effectiveText;
+            itemMap[key] = effectiveText;
+            nodeMap[key] = effectiveText;
+            fileMap[key] = effectiveText;
+            settingsMap[key] = effectiveText;
+            settingDescMap[key] = effectiveText;
         } else {
-            if (categories.includes('item')) itemMap[key] = text;
-            if (categories.includes('node')) nodeMap[key] = text;
-            if (categories.includes('file')) fileMap[key] = text;
-            if (categories.includes('setting')) settingsMap[key] = text;
-            if (categories.includes('setting_desc')) settingDescMap[key] = text;
+            if (categories.includes('item')) itemMap[key] = effectiveText;
+            if (categories.includes('node')) nodeMap[key] = effectiveText;
+            if (categories.includes('file')) fileMap[key] = effectiveText;
+            if (categories.includes('setting')) settingsMap[key] = effectiveText;
+            if (categories.includes('setting_desc')) settingDescMap[key] = effectiveText;
         }
     });
 };
@@ -125,9 +107,16 @@ export const subscribeToTranslationUpdates = (callback: () => void) => {
 
 // --- Lookup ---
 const lookup = (key: string, primaryMap: Record<string, string>): string | null => {
+    // 1. Exact Match in specific map (includes customs/masked)
     if (primaryMap[key]) return primaryMap[key];
+    
+    // 2. Check Custom Masking specifically if not found above but exists in customData as masked
+    if (customData[key] && customData[key].masked) return key;
+
+    // 3. Global Map
     if (globalMap[key]) return globalMap[key];
 
+    // 4. Case-insensitive Search
     const lowerKey = normalize(key);
     const primaryMatch = Object.keys(primaryMap).find(k => normalize(k) === lowerKey);
     if (primaryMatch) return primaryMap[primaryMatch];
@@ -156,6 +145,12 @@ export const getFileNameTranslation = (filename: string): string => {
 };
 
 export const hasTranslation = (id: string): boolean => {
+    // Check custom masked first - if masked, we treat it as "no translation" for UI coloring purposes usually, 
+    // BUT functionally it returns the ID. 
+    // Here we return true if there is a translation entry (default or custom active).
+    // If masked, we technically "have" a translation entry that says "don't translate".
+    if (customData[id]?.masked) return false; 
+
     if (itemMap[id] || nodeMap[id] || fileMap[id] || globalMap[id] || settingsMap[id]) return true;
     const lower = normalize(id);
     const search = (map: Record<string, string>) => Object.keys(map).some(k => normalize(k) === lower);
@@ -181,7 +176,7 @@ export const saveTranslation = (key: string, value: string, category: Translatio
         newCategories = [category];
     }
 
-    customData[key] = { text: value, categories: newCategories };
+    customData[key] = { text: value, categories: newCategories, masked: false };
     localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
     loadTranslations();
     window.dispatchEvent(new Event(UPDATE_EVENT));
@@ -205,17 +200,40 @@ export const toggleTranslationCategory = (key: string, category: TranslationCate
     }
 
     if (newCategories.length === 0) {
-        deleteTranslation(key);
+        deleteTranslation(key); // Use smart delete
     } else {
-        customData[key] = { text: value, categories: newCategories };
+        customData[key] = { text: value, categories: newCategories, masked: false };
         localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
         loadTranslations();
         window.dispatchEvent(new Event(UPDATE_EVENT));
     }
 };
 
+/**
+ * Deletes a translation.
+ * If the translation exists in the hardcoded defaults, it "masks" it (hides the default).
+ * If it's pure custom, it removes it entirely.
+ */
 export const deleteTranslation = (key: string) => {
-    delete customData[key];
+    // Check if it exists in defaults
+    let isDefault = false;
+    if (itemTranslations[key] || nodeTranslations[key] || fileTranslations[key] || serverSettingsTranslations[key] || serverSettingsDescriptions[key.replace('DESC::', '')]) {
+        isDefault = true;
+    }
+
+    if (isDefault) {
+        // Mask it instead of deleting
+        const current = customData[key];
+        customData[key] = { 
+            text: key, 
+            categories: current ? current.categories : ['global'], // Keep categories or default to global
+            masked: true 
+        };
+    } else {
+        // Truly delete
+        delete customData[key];
+    }
+
     localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
     loadTranslations();
     window.dispatchEvent(new Event(UPDATE_EVENT));
@@ -229,21 +247,18 @@ export const bulkSaveTranslations = (updates: { key: string, value: string, cate
 
 export const bulkDeleteTranslations = (keys: string[]) => {
     keys.forEach(key => {
-        delete customData[key];
+        deleteTranslation(key);
     });
-    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
-    loadTranslations();
-    window.dispatchEvent(new Event(UPDATE_EVENT));
 };
 
 export const importTranslations = (jsonContent: any) => {
     try {
         Object.entries(jsonContent).forEach(([k, v]: [string, any]) => {
             if (typeof v === 'string') {
-                customData[k] = { text: v, categories: ['global'] };
-            } else if (typeof v === 'object' && v.text) {
+                customData[k] = { text: v, categories: ['global'], masked: false };
+            } else if (typeof v === 'object' && (v.text || v.masked)) {
                 const cats = Array.isArray(v.categories) ? v.categories : (v.category ? [v.category] : ['global']);
-                customData[k] = { text: v.text, categories: cats };
+                customData[k] = { text: v.text || k, categories: cats, masked: !!v.masked };
             }
         });
         localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
@@ -265,20 +280,48 @@ export const resetTranslations = () => {
     window.dispatchEvent(new Event(UPDATE_EVENT));
 };
 
-export const getAllTranslations = (): { key: string, value: string, categories: TranslationCategory[], isCustom: boolean }[] => {
-    const list: { key: string, value: string, categories: TranslationCategory[], isCustom: boolean }[] = [];
+// Returns merged list of defaults and customs. 
+// If a default is masked, it is returned with isMasked=true and value=key
+export const getAllTranslations = (modeFilter?: 'items' | 'server' | 'files'): { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean }[] => {
+    const list: { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean }[] = [];
     const seen = new Set<string>();
 
+    // Helper to check if category matches mode
+    const matchesMode = (cats: TranslationCategory[]) => {
+        if (!modeFilter) return true;
+        if (cats.includes('global')) return true; // Global shows everywhere? Or maybe restrictive? Let's show everywhere.
+        if (modeFilter === 'items') return cats.includes('item') || cats.includes('node');
+        if (modeFilter === 'server') return cats.includes('setting') || cats.includes('setting_desc');
+        if (modeFilter === 'files') return cats.includes('file');
+        return false;
+    };
+
+    // 1. Add Custom Data (including masks)
     Object.entries(customData).forEach(([k, v]) => {
-        list.push({ key: k, value: v.text, categories: v.categories, isCustom: true });
+        if (!matchesMode(v.categories)) return;
+        
+        list.push({ 
+            key: k, 
+            value: v.masked ? (v.categories.includes('setting_desc') ? "" : k) : v.text, 
+            categories: v.categories, 
+            isCustom: true,
+            isMasked: !!v.masked
+        });
         seen.add(k);
     });
 
-    const addDefaults = (map: Record<string, string>, cat: TranslationCategory) => {
+    // 2. Add Defaults (if not seen)
+    const addDefaults = (map: Record<string, string>, cat: TranslationCategory, mapPrefix = "") => {
+        // Optimization: Only scan maps relevant to mode
+        if (modeFilter === 'items' && !['item', 'node'].includes(cat)) return;
+        if (modeFilter === 'server' && !['setting', 'setting_desc'].includes(cat)) return;
+        if (modeFilter === 'files' && cat !== 'file') return;
+
         Object.entries(map).forEach(([k, v]) => {
-            if (!seen.has(k)) {
-                list.push({ key: k, value: v, categories: [cat], isCustom: false });
-                seen.add(k);
+            const fullKey = mapPrefix ? `${mapPrefix}${k}` : k;
+            if (!seen.has(fullKey)) {
+                list.push({ key: fullKey, value: v, categories: [cat], isCustom: false, isMasked: false });
+                seen.add(fullKey);
             }
         });
     };
@@ -287,7 +330,7 @@ export const getAllTranslations = (): { key: string, value: string, categories: 
     addDefaults(nodeTranslations, 'node');
     addDefaults(fileTranslations, 'file');
     addDefaults(serverSettingsTranslations, 'setting');
-    addDefaults(settingDescMap, 'setting_desc');
+    addDefaults(settingDescMap, 'setting_desc'); // Note: These keys already have DESC:: prefix in the map
 
     return list.sort((a, b) => a.key.localeCompare(b.key));
 };
@@ -295,12 +338,14 @@ export const getAllTranslations = (): { key: string, value: string, categories: 
 export const getIdsByTranslationMatch = (term: string): string[] => {
     if (!term) return [];
     const lower = normalize(term);
-    const all = getAllTranslations();
-    return all.filter(t => t.value.toLowerCase().includes(lower)).map(t => t.key);
+    const all = getAllTranslations(); // Search all, ignoring mode
+    // Filter out masked items from search results usually? Or include them?
+    // If masked, value == key, so it works naturally.
+    return all.filter(t => !t.isMasked && t.value.toLowerCase().includes(lower)).map(t => t.key);
 };
 
 export const getIdsByFuzzyTranslationMatch = (term: string): string[] => {
     if (!term) return [];
     const all = getAllTranslations();
-    return all.filter(t => fuzzyMatch(t.value, term)).map(t => t.key);
+    return all.filter(t => !t.isMasked && fuzzyMatch(t.value, term)).map(t => t.key);
 };

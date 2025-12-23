@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useI18n } from '../i18n';
 import { UserManagement } from './UserManagement';
-import { Cog6ToothIcon, XMarkIcon, ArrowDownTrayIcon, ArrowUpTrayIcon, ArrowPathIcon, ChartBarIcon, ChartPieIcon, ArrowRightOnRectangleIcon } from './Icons';
+import { Cog6ToothIcon, XMarkIcon, ArrowDownTrayIcon, ArrowUpTrayIcon, ArrowPathIcon, ChartBarIcon, ChartPieIcon, ArrowRightOnRectangleIcon, FolderIcon, CubeIcon } from './Icons';
 import { BooleanToggle } from './FormControls';
 import { useSettings } from '../SettingsContext';
 
@@ -21,9 +21,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, autoSave,
     const { chartMode, setChartMode } = useSettings();
     const [activeTab, setActiveTab] = useState<'general' | 'data' | 'account'>('general');
 
-    const handleOpenTrans = () => {
-        // Open in new tab/window for multi-monitor support
-        window.open(window.location.origin + '?view=translations', '_blank');
+    const handleOpenTrans = (type: 'items' | 'server' | 'files') => {
+        // Open in new tab/window for multi-monitor support with specific type param
+        window.open(`${window.location.origin}${window.location.pathname}?view=translations&type=${type}`, '_blank');
         onClose();
     };
 
@@ -127,18 +127,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, autoSave,
 
                         {activeTab === 'data' && (
                             <div className="space-y-6 animate-slide-up">
-                                {/* Translation Management Link */}
-                                <div className="bg-scum-800/30 p-4 rounded-xl border border-scum-700/50 flex items-center justify-between group cursor-pointer hover:bg-scum-800/50 transition-colors" onClick={handleOpenTrans}>
-                                    <div>
-                                        <h3 className="text-sm font-bold text-emerald-400 uppercase flex items-center gap-2">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                            {t('settings.transTitle')}
-                                        </h3>
-                                        <p className="text-xs text-gray-500 mt-1">{t('settings.transDesc')}</p>
+                                {/* Translation Management Links */}
+                                <div className="bg-scum-800/30 p-4 rounded-xl border border-scum-700/50">
+                                    <h3 className="text-sm font-bold text-emerald-400 uppercase flex items-center gap-2 mb-4">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                        {t('settings.transTitle')}
+                                    </h3>
+                                    <p className="text-xs text-gray-500 mb-4">{t('settings.transDesc')}</p>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <button 
+                                            onClick={() => handleOpenTrans('items')}
+                                            className="flex flex-col items-center justify-center gap-2 bg-emerald-900/20 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-black p-3 rounded-lg transition-all active:scale-95 group"
+                                        >
+                                            <CubeIcon className="w-6 h-6" />
+                                            <span className="text-xs font-bold text-center">Items & Nodes</span>
+                                        </button>
+                                        
+                                        <button 
+                                            onClick={() => handleOpenTrans('server')}
+                                            className="flex flex-col items-center justify-center gap-2 bg-purple-900/20 border border-purple-500/20 text-purple-400 hover:bg-purple-500 hover:text-white p-3 rounded-lg transition-all active:scale-95 group"
+                                        >
+                                            <Cog6ToothIcon className="w-6 h-6" />
+                                            <span className="text-xs font-bold text-center">Server Settings</span>
+                                        </button>
+
+                                        <button 
+                                            onClick={() => handleOpenTrans('files')}
+                                            className="flex flex-col items-center justify-center gap-2 bg-yellow-900/20 border border-yellow-500/20 text-yellow-400 hover:bg-yellow-500 hover:text-black p-3 rounded-lg transition-all active:scale-95 group"
+                                        >
+                                            <FolderIcon className="w-6 h-6" />
+                                            <span className="text-xs font-bold text-center">File Names</span>
+                                        </button>
                                     </div>
-                                    <button className="bg-emerald-900/30 border border-emerald-500/30 text-emerald-400 group-hover:bg-emerald-500 group-hover:text-black py-2 px-4 rounded-lg transition-all text-xs font-bold flex items-center gap-2">
-                                        {t('settings.openTransManager')} <ArrowRightOnRectangleIcon className="w-4 h-4 -rotate-45" />
-                                    </button>
                                 </div>
 
                                 {/* Node Library Management */}

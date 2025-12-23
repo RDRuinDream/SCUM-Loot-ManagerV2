@@ -8,7 +8,7 @@ import { VisualEditor } from './components/VisualEditor';
 import { GeneralZoneModifiersEditor } from './components/GeneralZoneModifiersEditor';
 import { ItemSpawningParametersEditor } from './components/ItemSpawningParametersEditor';
 import { NodeLibraryEditor } from './components/NodeLibraryEditor';
-import { ServerSettingsEditor } from './components/ServerSettingsEditor'; // Import new editor
+import { ServerSettingsEditor } from './components/ServerSettingsEditor'; 
 import { BulkImporter } from './components/BulkImporter';
 import { ZonesVisualizer } from './components/ZonesVisualizer';
 import { DiffView } from './components/DiffView';
@@ -83,6 +83,7 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
   // Simple URL Routing
   const searchParams = new URLSearchParams(window.location.search);
   const isTranslationView = searchParams.get('view') === 'translations';
+  const translationType = searchParams.get('type') as 'items' | 'server' | 'files' || 'items';
 
   const [files, setFiles] = useState<FileNode[]>([]);
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -907,7 +908,7 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
               <div className="absolute inset-0 bg-aurora opacity-50 pointer-events-none"></div>
               <div className="absolute inset-0 bg-noise opacity-10 pointer-events-none"></div>
               {/* Back button here closes the window if opened as popup */}
-              <TranslationManager onBack={() => window.close()} />
+              <TranslationManager onBack={() => window.close()} mode={translationType} />
           </div>
       );
   }

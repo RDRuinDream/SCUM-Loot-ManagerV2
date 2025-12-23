@@ -6,20 +6,28 @@ import { SearchIcon, ArrowPathIcon, ArrowDownTrayIcon, ArrowUpTrayIcon, TrashIco
 
 interface TranslationManagerProps {
     onBack: () => void;
+    mode?: 'items' | 'server' | 'files'; // New Prop
 }
 
 type FilterCategory = TranslationCategory | 'all' | 'custom';
 
-export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }) => {
+export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack, mode = 'items' }) => {
     const { t } = useI18n();
     const [searchTerm, setSearchTerm] = useState("");
     const [filterCategory, setFilterCategory] = useState<FilterCategory>('all');
-    const [translations, setTranslations] = useState<{ key: string, value: string, categories: TranslationCategory[], isCustom: boolean }[]>([]);
+    const [translations, setTranslations] = useState<{ key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean }[]>([]);
     
+    // Default category based on mode
+    const defaultCategory = useMemo(() => {
+        if (mode === 'server') return 'setting';
+        if (mode === 'files') return 'file';
+        return 'item';
+    }, [mode]);
+
     // Add New State
     const [newKey, setNewKey] = useState("");
     const [newValue, setNewValue] = useState("");
-    const [newCategory, setNewCategory] = useState<TranslationCategory>('item');
+    const [newCategory, setNewCategory] = useState<TranslationCategory>(defaultCategory);
     
     // Edit State
     const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -30,7 +38,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
     const refreshData = () => {
-        setTranslations(getAllTranslations());
+        setTranslations(getAllTranslations(mode));
     };
 
     useEffect(() => {
@@ -39,7 +47,11 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
             refreshData();
         });
         return () => unsubscribe();
-    }, []);
+    }, [mode]); // Refresh when mode changes
+
+    useEffect(() => {
+        setNewCategory(defaultCategory);
+    }, [mode, defaultCategory]);
 
     const filteredList = useMemo(() => {
         let list = translations;
@@ -90,7 +102,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
         saveTranslation(finalKey, newValue, newCategory);
         setNewKey("");
         setNewValue("");
-        setNewCategory("item");
+        setNewCategory(defaultCategory);
     };
 
     const handleExport = () => {
@@ -99,7 +111,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = "scum_custom_translations_v3.json";
+        a.download = `scum_translations_${mode}.json`;
         a.click();
     };
 
@@ -156,10 +168,29 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
         }
     };
 
+    // Determine available categories based on mode
+    const availableCategories = useMemo(() => {
+        const cats: {id: string, label: string}[] = [{ id: 'all', label: t('trans.catAll') }];
+        
+        if (mode === 'items') {
+            cats.push({ id: 'item', label: t('trans.catItems') });
+            cats.push({ id: 'node', label: t('trans.catNodes') });
+        } else if (mode === 'server') {
+            cats.push({ id: 'setting', label: "Settings (INI Key)" });
+            cats.push({ id: 'setting_desc', label: "Descriptions (Hint)" });
+        } else if (mode === 'files') {
+            cats.push({ id: 'file', label: t('trans.catFiles') });
+        }
+        
+        cats.push({ id: 'custom', label: t('trans.catCustom') });
+        return cats;
+    }, [mode, t]);
+
     // Render category pills
     const CategoryToggle = ({ item }: { item: typeof translations[0] }) => {
         const isGlobal = item.categories.includes('global');
-        
+        const allowedCats = mode === 'items' ? ['item', 'node'] : (mode === 'server' ? ['setting', 'setting_desc'] : ['file']);
+
         return (
             <div className="flex gap-1 flex-wrap justify-end">
                 {isGlobal ? (
@@ -172,7 +203,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                     </button>
                 ) : (
                     <>
-                        {['item', 'node', 'file', 'setting', 'setting_desc'].map((cat) => {
+                        {allowedCats.map((cat) => {
                             const isActive = item.categories.includes(cat as TranslationCategory);
                             let color = "";
                             let label = cat;
@@ -205,6 +236,9 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
         );
     };
 
+    // Mode Title
+    const modeTitle = mode === 'items' ? "Items & Nodes" : (mode === 'server' ? "Server Settings" : "Filenames");
+
     return (
         <div className="flex flex-col h-full bg-[#0b1120] text-gray-200 animate-fade-in absolute inset-0 z-50">
             {/* Header */}
@@ -214,7 +248,9 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                         <XMarkIcon className="w-5 h-5" />
                     </button>
                     <h2 className="text-xl font-bold text-scum-accent tracking-widest uppercase flex items-center gap-3">
-                        <span className="text-2xl filter drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]">🌐</span> {t('trans.title')}
+                        <span className="text-2xl filter drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]">🌐</span> 
+                        {t('trans.title')} 
+                        <span className="text-gray-600 text-sm px-2 py-0.5 border border-gray-700 rounded bg-black/20">{modeTitle}</span>
                     </h2>
                 </div>
                 
@@ -254,15 +290,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                     </div>
 
                     <div className="flex flex-col gap-1">
-                        {[
-                            { id: 'all', label: t('trans.catAll') },
-                            { id: 'item', label: t('trans.catItems') },
-                            { id: 'node', label: t('trans.catNodes') },
-                            { id: 'file', label: t('trans.catFiles') },
-                            { id: 'setting', label: "Settings (INI Keys)" },
-                            { id: 'setting_desc', label: "Setting Hints (DESC::)" },
-                            { id: 'custom', label: t('trans.catCustom') },
-                        ].map(cat => (
+                        {availableCategories.map(cat => (
                             <button
                                 key={cat.id}
                                 onClick={() => setFilterCategory(cat.id as FilterCategory)}
@@ -287,11 +315,9 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                                     value={newCategory}
                                     onChange={(e) => setNewCategory(e.target.value as TranslationCategory)}
                                 >
-                                    <option value="item">Item</option>
-                                    <option value="node">Node</option>
-                                    <option value="file">File</option>
-                                    <option value="setting">Setting (INI)</option>
-                                    <option value="setting_desc">Setting Hint</option>
+                                    {mode === 'items' && <><option value="item">Item</option><option value="node">Node</option></>}
+                                    {mode === 'server' && <><option value="setting">Setting</option><option value="setting_desc">Hint</option></>}
+                                    {mode === 'files' && <option value="file">File</option>}
                                     <option value="global">Global</option>
                                 </select>
                                 <button onClick={handleAddNew} disabled={!newKey || !newValue} className="bg-scum-accent text-black font-bold text-xs px-4 py-2 rounded hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-cyan-500/20 active:scale-95">
@@ -324,7 +350,7 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                             </div>
                         ) : (
                             filteredList.slice(0, 200).map((tItem) => {
-                                const { key, value, isCustom } = tItem;
+                                const { key, value, isCustom, isMasked } = tItem;
                                 const isEditing = editingKey === key;
                                 const isSelected = selectedKeys.has(key);
                                 const isDesc = tItem.categories.includes('setting_desc');
@@ -361,7 +387,10 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                                                     }}
                                                 />
                                             ) : (
-                                                <div className={`text-sm ${isCustom ? 'text-scum-accent font-bold' : 'text-gray-300'} whitespace-pre-wrap leading-relaxed`}>{value}</div>
+                                                <div className={`text-sm ${isMasked ? 'text-red-400 line-through opacity-50' : (isCustom ? 'text-scum-accent font-bold' : 'text-gray-300')} whitespace-pre-wrap leading-relaxed`}>
+                                                    {isMasked ? (key) : value}
+                                                    {isMasked && <span className="text-[9px] no-underline ml-2 bg-red-900/30 px-1 rounded text-red-300">DELETED/MASKED</span>}
+                                                </div>
                                             )}
                                         </div>
 
@@ -376,14 +405,16 @@ export const TranslationManager: React.FC<TranslationManagerProps> = ({ onBack }
                                                     <button onClick={() => setEditingKey(null)} className="p-1.5 bg-gray-700/50 text-gray-400 rounded hover:bg-gray-600 hover:text-white transition-colors"><XMarkIcon className="w-4 h-4" /></button>
                                                 </>
                                             ) : (
-                                                <button onClick={() => { setEditingKey(key); setEditingValue(value); }} className="px-3 py-1 bg-white/5 text-gray-400 rounded text-xs hover:bg-white/10 hover:text-white transition-colors border border-transparent hover:border-white/10">
-                                                    {t('trans.edit')}
-                                                </button>
-                                            )}
-                                            {isCustom && !isEditing && !isBulkMode && (
-                                                <button onClick={() => handleDelete(key)} className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors" title={t('trans.delete')}>
-                                                    <TrashIcon className="w-4 h-4" />
-                                                </button>
+                                                <>
+                                                    <button onClick={() => { setEditingKey(key); setEditingValue(isMasked ? "" : value); }} className="px-3 py-1 bg-white/5 text-gray-400 rounded text-xs hover:bg-white/10 hover:text-white transition-colors border border-transparent hover:border-white/10">
+                                                        {t('trans.edit')}
+                                                    </button>
+                                                    {!isEditing && !isBulkMode && (
+                                                        <button onClick={() => handleDelete(key)} className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors" title={t('trans.delete')}>
+                                                            <TrashIcon className="w-4 h-4" />
+                                                        </button>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </div>
