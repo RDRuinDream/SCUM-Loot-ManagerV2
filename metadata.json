@@ -1,0 +1,5 @@
+{
+  "name": "SCUM Loot Manager",
+  "description": "A modern, web-based JSON manager for SCUM equipment configurations using local file system access.",
+  "requestFramePermissions": []
+}
