@@ -75,8 +75,8 @@ export const NodesSection: React.FC<NodesSectionProps> = ({
                         key={idx} 
                         data-scum-item-id={nodeId} 
                         className={`
-                            relative p-6 rounded-2xl border transition-all duration-300 group glass-card focus-within:z-50
-                            ${isSelected ? 'bg-scum-800/80 border-pink-500/50 ring-1 ring-pink-500/30' : 'bg-scum-800/30 border-scum-700/50'}
+                            relative p-6 rounded-2xl border transition-all duration-300 group focus-within:z-50
+                            ${isSelected ? 'bg-scum-800/80 border-pink-500/50 ring-1 ring-pink-500/30' : 'bg-scum-800/40 border-scum-700/50 hover:bg-scum-800/60'}
                             ${isHovered ? 'ring-2 ring-pink-400' : ''}
                         `} 
                         onDrop={(e) => handleLibraryDropOnNode(e, idx)}

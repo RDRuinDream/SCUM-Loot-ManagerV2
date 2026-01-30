@@ -41,7 +41,7 @@ export const FixedItemsSection: React.FC<FixedItemsSectionProps> = ({
                 <div 
                     key={idx} 
                     className={`
-                        relative p-2 pl-4 rounded-lg flex items-center gap-4 border transition-all duration-200 glass-card focus-within:z-50
+                        relative p-2 pl-4 rounded-lg flex items-center gap-4 border transition-all duration-200 focus-within:z-50
                         ${isSelected ? 'bg-scum-800/80 border-emerald-500/50 ring-1 ring-emerald-500/30' : 'bg-scum-800/30 border-transparent hover:bg-scum-800/60'}
                     `}
                 >

@@ -46,7 +46,7 @@ export const GlobalSection: React.FC<GlobalSectionProps> = ({
     return (
         <div className="space-y-6 pb-20">
             {/* Generation Control */}
-            <div className={`space-y-4 glass-card p-6 rounded-2xl border-t-2 transition-all ${isBulkMode && selectedGroups?.has('gen') ? 'border-t-scum-accent ring-1 ring-scum-accent/30 bg-scum-800/60' : 'border-t-scum-accent/50'}`}>
+            <div className={`space-y-4 bg-scum-800/40 p-6 rounded-2xl border transition-all ${isBulkMode && selectedGroups?.has('gen') ? 'border-scum-accent ring-1 ring-scum-accent/30 bg-scum-800/60' : 'border-scum-accent/50'}`}>
                  <div className="flex justify-between items-center border-b border-scum-700/50 pb-2 mb-4">
                      <h4 className="text-xs font-bold text-scum-accent uppercase tracking-wider flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-scum-accent animate-pulse"></span>{t('global.genControl')}</h4>
                      {renderBulkCheckbox('gen')}
@@ -59,7 +59,7 @@ export const GlobalSection: React.FC<GlobalSectionProps> = ({
             </div>
 
             {/* Flags / Rules */}
-            <div className={`glass-card p-6 rounded-2xl border-t-2 transition-all ${isBulkMode && selectedGroups?.has('flags') ? 'border-t-purple-500 ring-1 ring-purple-500/30 bg-scum-800/60' : 'border-t-purple-500/50'}`}>
+            <div className={`bg-scum-800/40 p-6 rounded-2xl border transition-all ${isBulkMode && selectedGroups?.has('flags') ? 'border-purple-500 ring-1 ring-purple-500/30 bg-scum-800/60' : 'border-purple-500/50'}`}>
                 <div className="flex justify-between items-center border-b border-scum-700/50 pb-2 mb-4">
                     <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse"></span>{t('global.flags')}</h4>
                     {renderBulkCheckbox('flags')}
@@ -73,7 +73,7 @@ export const GlobalSection: React.FC<GlobalSectionProps> = ({
             </div>
 
             {/* Item State (Damage/Usage) */}
-            <div className={`glass-card p-6 rounded-2xl border-t-2 transition-all ${isBulkMode && selectedGroups?.has('damage') ? 'border-t-orange-500 ring-1 ring-orange-500/30 bg-scum-800/60' : 'border-t-orange-500/50'}`}>
+            <div className={`bg-scum-800/40 p-6 rounded-2xl border transition-all ${isBulkMode && selectedGroups?.has('damage') ? 'border-orange-500 ring-1 ring-orange-500/30 bg-scum-800/60' : 'border-orange-500/50'}`}>
                 <div className="flex justify-between items-center border-b border-scum-700/50 pb-2 mb-4">
                     <h4 className="text-xs font-bold text-orange-400 uppercase tracking-wider flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse"></span>{t('global.damageUsage')}</h4>
                     {renderBulkCheckbox('damage')}
@@ -91,7 +91,7 @@ export const GlobalSection: React.FC<GlobalSectionProps> = ({
             </div>
 
             {/* Post Spawn Actions */}
-            <div className={`glass-card p-6 rounded-2xl border-t-2 transition-all ${isBulkMode && selectedGroups?.has('actions') ? 'border-t-emerald-500 ring-1 ring-emerald-500/30 bg-scum-800/60' : 'border-t-emerald-500/50'}`}>
+            <div className={`bg-scum-800/40 p-6 rounded-2xl border transition-all ${isBulkMode && selectedGroups?.has('actions') ? 'border-emerald-500 ring-1 ring-emerald-500/30 bg-scum-800/60' : 'border-emerald-500/50'}`}>
                 <div className="flex justify-between items-center border-b border-scum-700/50 pb-2 mb-4">
                     <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>{t('global.actions')}</h4>
                     <div className="flex items-center gap-3">

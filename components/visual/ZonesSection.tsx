@@ -36,8 +36,8 @@ export const ZonesSection: React.FC<ZonesSectionProps> = ({
                 <div 
                     key={idx} 
                     className={`
-                        relative p-4 rounded-lg flex items-center gap-4 border transition-all glass-card focus-within:z-50
-                        ${isSelected ? 'bg-scum-800/80 border-yellow-500/50 ring-1 ring-yellow-500/30' : 'bg-scum-800/30 border-scum-700/50'}
+                        relative p-4 rounded-lg flex items-center gap-4 border transition-all focus-within:z-50
+                        ${isSelected ? 'bg-scum-800/80 border-yellow-500/50 ring-1 ring-yellow-500/30' : 'bg-scum-800/30 border-scum-700/50 hover:bg-scum-800/60'}
                     `} 
                     data-scum-item-id={'Zone #' + idx}
                 >
