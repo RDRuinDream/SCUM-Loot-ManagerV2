@@ -14,19 +14,22 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './components'),
+      '@utils': path.resolve(__dirname, './utils'),
     },
   },
   base: './', // Ensures relative paths for assets
   build: {
     outDir: 'dist',
     sourcemap: false,
-    emptyOutDir: false, // Prevent deleting worker.js if built earlier
+    emptyOutDir: true, // Clean outDir before build
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ['react', 'react-dom'],
+          vendor: ['react', 'react-dom', 'zustand', '@tanstack/react-query'],
           monaco: ['@monaco-editor/react'],
-          ui: ['lucide-react', 'framer-motion']
+          ui: ['lucide-react', 'framer-motion'],
+          dnd: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities']
         }
       }
     }
