@@ -26,6 +26,9 @@ import { stringToColor } from './utils/helpers';
 import { flattenFileNodes, findFileNode } from './utils/treeUtils';
 import { subscribeToTranslationUpdates } from './utils/itemTranslator';
 
+import { CommandPalette } from './components/CommandPalette';
+import { useAppStore } from './src/store';
+
 const MAP_IMAGE_URL = 'https://raw.githubusercontent.com/LXHuiMeng/SCUMMap/main/Img/scummap.webp';
 
 const AuthWrapper = () => {
@@ -488,6 +491,8 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
       } else { setToastMsg({ msg: t('app.fileNotFound') + " (Save)", type: 'error' }); }
   }, [t]);
 
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
   useEffect(() => {
       const handleKeyDown = async (e: KeyboardEvent) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -496,6 +501,10 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                   await performSave(selectedPathRef.current);
                   if (autoSaveRef.current) setToastMsg({ msg: t('app.savedSuccess'), type: 'success' });
               }
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+              e.preventDefault();
+              setShowCommandPalette(open => !open);
           }
       };
       window.addEventListener('keydown', handleKeyDown);
@@ -909,13 +918,24 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
   }, [openFiles, zoneColors]);
 
   const currentFileContent = selectedPath ? openFiles[selectedPath] : "";
-  let parsedData: any = {};
-  let parseError = false;
-  // Use try-catch safely only for JSON
+  const deferredFileContent = React.useDeferredValue(currentFileContent);
+
+  const { parsedData, parseError } = useMemo(() => {
+    let result: any = {};
+    let error = false;
+    const isServerSettingsLocal = selectedPath?.endsWith('ServerSettings.ini');
+    
+    if (!isServerSettingsLocal && deferredFileContent) {
+        try { 
+            result = JSON.parse(deferredFileContent); 
+        } catch (e) { 
+            error = true; 
+        }
+    }
+    return { parsedData: result, parseError: error };
+  }, [deferredFileContent, selectedPath]);
+
   const isServerSettings = selectedPath?.endsWith('ServerSettings.ini');
-  if (!isServerSettings) {
-      try { if (currentFileContent) parsedData = JSON.parse(currentFileContent); } catch (e) { parseError = true; }
-  }
 
   const isGeneralModifiers = selectedPath?.endsWith('GeneralZoneModifiers.json') || (parsedData.Modifiers && !parsedData.Parameters);
   const isSpawningParameters = parsedData.Parameters && Array.isArray(parsedData.Parameters);
@@ -1281,6 +1301,12 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                  </div>
              </div>
         </div>
+        <CommandPalette 
+            open={showCommandPalette}
+            onOpenChange={setShowCommandPalette}
+            files={files}
+            onSelectFile={handleNavigateByPath}
+        />
     </div>
   );
 };

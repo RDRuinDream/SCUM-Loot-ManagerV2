@@ -1,37 +1,42 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
-import { FileNode } from '../types';
+import { FileNode } from '../../types';
 
 interface AppState {
-  fileNodes: FileNode[];
+  // Config
+  theme: 'dark' | 'light' | 'system';
+  setTheme: (theme: 'dark' | 'light' | 'system') => void;
+  
+  // Non-serializable state
+  dirHandle: FileSystemDirectoryHandle | null;
+  setDirHandle: (handle: FileSystemDirectoryHandle | null) => void;
+  
+  // File tree basic state (used cross components)
   selectedPath: string | null;
   selectedPaths: string[];
-  theme: 'dark' | 'light' | 'system';
-  
-  // Actions
-  setFileNodes: (nodes: FileNode[]) => void;
-  selectFile: (path: string) => void;
-  setSelection: (paths: string[]) => void;
-  setTheme: (theme: 'dark' | 'light' | 'system') => void;
+  setSelectedPath: (path: string | null) => void;
+  setSelectedPaths: (paths: string[]) => void;
 }
 
 export const useAppStore = create<AppState>()(
   devtools(
     persist(
       (set) => ({
-        fileNodes: [],
+        // Serialized
+        theme: 'dark',
+        setTheme: (theme) => set({ theme }),
+
+        // Non-serialized
+        dirHandle: null,
+        setDirHandle: (handle) => set({ dirHandle: handle }),
         selectedPath: null,
         selectedPaths: [],
-        theme: 'dark',
-        
-        setFileNodes: (nodes) => set({ fileNodes: nodes }),
-        selectFile: (path) => set({ selectedPath: path }),
-        setSelection: (paths) => set({ selectedPaths: paths }),
-        setTheme: (theme) => set({ theme }),
+        setSelectedPath: (path) => set({ selectedPath: path }),
+        setSelectedPaths: (paths) => set({ selectedPaths: paths }),
       }),
       {
         name: 'scum-config-storage',
-        partialize: (state) => ({ theme: state.theme }), // Only persist UI prefs
+        partialize: (state) => ({ theme: state.theme }), 
       }
     )
   )

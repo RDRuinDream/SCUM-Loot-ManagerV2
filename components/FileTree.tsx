@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { List, RowComponentProps, ListImperativeAPI } from 'react-window';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import { FileNode, ScumJson } from '../types';
 import { FolderIcon, FileIcon, ChevronRight, PlusIcon, SearchIcon, LinkIcon, TrashIcon, ArrowPathIcon, ExclamationTriangleIcon } from './Icons';
@@ -332,6 +332,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
     nodes, onSelectFile, selectedPath, selectedPaths = [], onSelectPaths, onRefresh, dependencyMap, highlightedPath, dirtyPaths, referencedPaths, zoneColors, conflicts, onNavigate, onPeekFile, onMoveNodes, onDeleteNodes, onRenameNode, onCreateFolder, onCreateFile, onImportDrop 
 }) => {
   const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = React.useDeferredValue(searchTerm);
   const { t } = useI18n();
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
@@ -345,8 +346,6 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const tooltipTimeout = useRef<number | null>(null);
   const previewTimeoutRef = useRef<number | null>(null);
   const closePreviewTimeoutRef = useRef<number | null>(null);
-  
-  const listRef = useRef<ListImperativeAPI>(null);
 
   useEffect(() => {
       const newExpanded = new Set(expandedPaths);
@@ -381,6 +380,27 @@ export const FileTree: React.FC<FileTreeProps> = ({
       });
   }, []);
 
+  const filterTree = useCallback((nodes: FileNode[], term: string): FileNode[] => {
+      if (!term) return nodes;
+      const transMatches = getIdsByFuzzyTranslationMatch(term);
+
+      return nodes.map(node => {
+          if (node.kind === 'file') {
+              const nameMatch = fuzzyMatch(node.name, term);
+              const transMatch = transMatches.some(tId => node.name.toLowerCase().includes(tId.toLowerCase()));
+              const fileTrans = getFileNameTranslation(node.name);
+              const fileTransMatch = fileTrans.toLowerCase().includes(term.toLowerCase());
+              return (nameMatch || transMatch || fileTransMatch) ? node : null;
+          } else if (node.kind === 'directory' && node.children) {
+              const children = filterTree(node.children, term);
+              if (children.length > 0) return { ...node, children };
+              if (fuzzyMatch(node.name, term)) return { ...node, children: node.children };
+              return null;
+          }
+          return null;
+      }).filter(Boolean) as FileNode[];
+  }, []);
+
   const flattenedNodes = useMemo(() => {
       const result: FlattenedNode[] = [];
       
@@ -395,31 +415,10 @@ export const FileTree: React.FC<FileTreeProps> = ({
           });
       };
 
-      const filterTree = (nodes: FileNode[]): FileNode[] => {
-          if (!searchTerm) return nodes;
-          const transMatches = getIdsByFuzzyTranslationMatch(searchTerm);
-
-          return nodes.map(node => {
-              if (node.kind === 'file') {
-                  const nameMatch = fuzzyMatch(node.name, searchTerm);
-                  const transMatch = transMatches.some(tId => node.name.toLowerCase().includes(tId.toLowerCase()));
-                  const fileTrans = getFileNameTranslation(node.name);
-                  const fileTransMatch = fileTrans.toLowerCase().includes(searchTerm.toLowerCase());
-                  return (nameMatch || transMatch || fileTransMatch) ? node : null;
-              } else if (node.kind === 'directory' && node.children) {
-                  const children = filterTree(node.children);
-                  if (children.length > 0) return { ...node, children };
-                  if (fuzzyMatch(node.name, searchTerm)) return { ...node, children: node.children };
-                  return null;
-              }
-              return null;
-          }).filter(Boolean) as FileNode[];
-      };
-
-      const filtered = filterTree(nodes);
+      const filtered = filterTree(nodes, deferredSearchTerm);
       traverse(filtered, 0, null);
       return result;
-  }, [nodes, expandedPaths, searchTerm]);
+  }, [nodes, expandedPaths, deferredSearchTerm, filterTree]);
 
   const handleSelect = useCallback((node: FileNode, multi: boolean, range: boolean) => {
       if (!onSelectPaths) {
@@ -482,63 +481,70 @@ export const FileTree: React.FC<FileTreeProps> = ({
       }
   }, [onMoveNodes, onImportDrop]);
 
-  const Row = ({ index, style, ariaAttributes }: RowComponentProps) => {
-      const { node, depth, isExpanded } = flattenedNodes[index];
-      const isSelected = selectedPaths.includes(node.path) || node.path === selectedPath;
-      const isHighlighted = node.path === highlightedPath;
-      const isReferenced = !!referencedPaths?.includes(node.path);
-      const isDirty = dirtyPaths.includes(node.path);
-      const conflictPaths = conflicts?.get(node.path);
-      const isConflict = !!conflictPaths;
-      
-      let displayZoneColor = zoneColors?.[node.path];
-      if (!displayZoneColor && node.name === 'Zones.json') {
-          const parentDir = node.path.substring(0, node.path.lastIndexOf('/'));
-          displayZoneColor = zoneColors?.[parentDir];
-      }
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const virtualizer = useVirtualizer({
+        count: flattenedNodes.length,
+        getScrollElement: () => scrollContainerRef.current,
+        estimateSize: () => 36,
+        overscan: 5,
+    });
 
-      const referencedBy = dependencyMap[node.path] || [];
-      const usageCount = referencedBy.length;
-      const isDependency = usageCount > 0;
+    const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
+        const { node, depth, isExpanded } = flattenedNodes[index];
+        const isSelected = selectedPaths.includes(node.path) || node.path === selectedPath;
+        const isHighlighted = node.path === highlightedPath;
+        const isReferenced = !!referencedPaths?.includes(node.path);
+        const isDirty = dirtyPaths.includes(node.path);
+        const conflictPaths = conflicts?.get(node.path);
+        const isConflict = !!conflictPaths;
 
-      return (
-          <FileTreeNode
-            style={style}
-            ariaAttributes={ariaAttributes}
-            node={node}
-            depth={depth}
-            isExpanded={!!isExpanded}
-            onToggle={() => togglePath(node.path)}
-            onSelect={handleSelect}
-            isSelected={isSelected}
-            isHighlighted={isHighlighted}
-            isReferenced={isReferenced}
-            isDirty={isDirty}
-            isConflict={isConflict}
-            conflictTooltip={isConflict ? `${t('filetree.conflictTooltip')}\n\n${t('filetree.conflictingWith')}\n${conflictPaths.map(p => `- ${p}`).join('\n')}` : node.name}
-            displayZoneColor={displayZoneColor}
-            usageCount={usageCount}
-            referencedBy={referencedBy}
-            isDependency={isDependency}
-            isDragOver={dragOverPath === node.path}
-            onHoverReference={handleHoverReference}
-            onLeaveReference={handleLeaveReference}
-            onHoverFile={handleHoverFile}
-            onLeaveFile={handleLeaveFile}
-            onContextMenu={handleContextMenu}
-            onDragStart={handleDragStart}
-            onDragOver={(e) => { e.preventDefault(); if (node.kind === 'directory') setDragOverPath(node.path); }}
-            onDragLeave={() => setDragOverPath(null)}
-            onDrop={handleDropNode}
-            editingState={editingState}
-            creatingState={creatingState}
-            onCommitEdit={commitEdit}
-            onCancelEdit={() => setEditingState(null)}
-            onCommitCreate={commitCreate}
-            onCancelCreate={() => setCreatingState(null)}
-          />
-      );
-  };
+        let displayZoneColor = zoneColors?.[node.path];
+        if (!displayZoneColor && node.name === 'Zones.json') {
+            const parentDir = node.path.substring(0, node.path.lastIndexOf('/'));
+            displayZoneColor = zoneColors?.[parentDir];
+        }
+
+        const referencedBy = dependencyMap[node.path] || [];
+        const usageCount = referencedBy.length;
+        const isDependency = usageCount > 0;
+
+        return (
+            <FileTreeNode
+              style={style}
+              node={node}
+              depth={depth}
+              isExpanded={!!isExpanded}
+              onToggle={() => togglePath(node.path)}
+              onSelect={handleSelect}
+              isSelected={isSelected}
+              isHighlighted={isHighlighted}
+              isReferenced={isReferenced}
+              isDirty={isDirty}
+              isConflict={isConflict}
+              conflictTooltip={isConflict ? `${t('filetree.conflictTooltip')}\n\n${t('filetree.conflictingWith')}\n${conflictPaths.map(p => `- ${p}`).join('\n')}` : node.name}
+              displayZoneColor={displayZoneColor}
+              usageCount={usageCount}
+              referencedBy={referencedBy}
+              isDependency={isDependency}
+              isDragOver={dragOverPath === node.path}
+              onHoverReference={handleHoverReference}
+              onLeaveReference={handleLeaveReference}
+              onHoverFile={handleHoverFile}
+              onLeaveFile={handleLeaveFile}
+              onContextMenu={handleContextMenu}
+              onDragStart={handleDragStart}
+              onDragOver={(e) => { e.preventDefault(); if (node.kind === 'directory') setDragOverPath(node.path); }}
+              onDragLeave={() => setDragOverPath(null)}
+              onDrop={handleDropNode}
+              editingState={editingState}
+              creatingState={creatingState}
+              onCommitEdit={commitEdit}
+              onCancelEdit={() => setEditingState(null)}
+              onCommitCreate={commitCreate}
+              onCancelCreate={() => setCreatingState(null)}
+            />
+        );
+    };
 
   const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
       e.preventDefault();
@@ -636,17 +642,24 @@ export const FileTree: React.FC<FileTreeProps> = ({
              {flattenedNodes.length === 0 ? (
                  <div className="text-center py-4 text-xs text-gray-500 italic">{t('explorer.noMatch')}</div>
              ) : (
-                <AutoSizer renderProp={({ height, width }) => (
-                    <List
-                        listRef={listRef}
-                        rowCount={flattenedNodes.length}
-                        rowHeight={36}
-                        style={{ height: height || 0, width: width || 0 }}
-                        className="custom-scrollbar"
-                        rowComponent={Row}
-                        rowProps={{}}
-                    />
-                )} />
+                <div ref={scrollContainerRef} className="h-full w-full overflow-y-auto overflow-x-hidden custom-scrollbar">
+                    <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                        {virtualizer.getVirtualItems().map((virtualItem) => (
+                            <Row
+                                key={virtualItem.key}
+                                index={virtualItem.index}
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: `${virtualItem.size}px`,
+                                    transform: `translateY(${virtualItem.start}px)`,
+                                }}
+                            />
+                        ))}
+                    </div>
+                </div>
              )}
         </div>
 

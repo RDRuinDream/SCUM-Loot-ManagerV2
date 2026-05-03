@@ -20,6 +20,6 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "**/*.json"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "components/**/*.ts", "components/**/*.tsx", "utils/**/*.ts", "services/**/*.ts", "data/**/*.ts", "types.ts", "*.tsx", "*.ts"],
+  "exclude": ["node_modules", "dist", "worker"]
 }
