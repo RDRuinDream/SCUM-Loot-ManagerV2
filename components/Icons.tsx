@@ -11,15 +11,29 @@ const EmojiIcon: React.FC<{ emoji: string, className?: string }> = ({ emoji, cla
   </span>
 );
 
-// CSS-based Chevron for modern look (replacing retro emoji arrow)
-const CssChevron: React.FC<{ direction: 'right' | 'down', className?: string }> = ({ direction, className = "" }) => (
-    <span className={`inline-block border-r-2 border-b-2 border-current w-[6px] h-[6px] transition-transform duration-200 ${direction === 'right' ? '-rotate-45' : 'rotate-45 mb-1'} ${className}`}></span>
+// SVG-based Chevron for a clean, professional look
+const ChevronIcon: React.FC<{ className?: string, points: string }> = ({ className = "", points }) => (
+  <svg 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2.0" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={`w-3 h-3 transition-transform duration-200 ${className}`}
+  >
+    <polyline points={points} />
+  </svg>
 );
 
 export const FolderIcon = (props: IconProps) => <EmojiIcon emoji="📂" {...props} />;
 export const FileIcon = (props: IconProps) => <EmojiIcon emoji="📄" {...props} />;
-export const ChevronRight = ({ className = "" }: IconProps) => <CssChevron direction="right" className={`opacity-70 ${className}`} />;
-export const ChevronDown = ({ className = "" }: IconProps) => <CssChevron direction="down" className={`opacity-70 ${className}`} />;
+export const ChevronRight = ({ className = "" }: IconProps) => (
+  <ChevronIcon points="12 18 15 12 12 6" className={className} />
+);
+export const ChevronDown = ({ className = "" }: IconProps) => (
+  <ChevronIcon points="9 10 12 15 15 10" className={className} />
+);
 export const SaveIcon = (props: IconProps) => <EmojiIcon emoji="💾" {...props} />;
 export const PlusIcon = (props: IconProps) => <EmojiIcon emoji="➕" {...props} />;
 export const TrashIcon = (props: IconProps) => <EmojiIcon emoji="🗑️" {...props} />;

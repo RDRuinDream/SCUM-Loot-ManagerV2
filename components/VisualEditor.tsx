@@ -53,7 +53,7 @@ const TabButton = React.memo(({ section, title, count, color, errorKeyPrefix, ac
         onClick={onClick}
         className={`w-full text-left px-5 py-4 flex items-center justify-between group transition-all duration-300 border-l-[3px] relative overflow-hidden
             ${isActive 
-                ? `bg-gradient-to-r from-scum-800/80 to-transparent border-scum-accent/80 shadow-[inset_4px_0_0_0_rgba(6,182,212,0.1)]` 
+                ? `bg-gradient-to-r from-scum-800/80 to-transparent border-scum-accent/80 shadow-[inset_4px_0_0_0_rgba(6,182,212,0.1)] rounded-r-xl` 
                 : 'border-transparent hover:bg-scum-800/40 text-gray-400'
             }`}
     >

@@ -1,11 +1,12 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { List, RowComponentProps, ListImperativeAPI } from 'react-window';
+import { AutoSizer } from 'react-virtualized-auto-sizer';
 import { FileNode, ScumJson } from '../types';
-import { FolderIcon, FileIcon, ChevronRight, PlusIcon, SearchIcon, LinkIcon, FilterIcon, TrashIcon, ArrowPathIcon, ArrowRightOnRectangleIcon, CubeIcon, ExclamationTriangleIcon } from './Icons';
-import { createJsonFile } from '../services/fileSystem';
+import { FolderIcon, FileIcon, ChevronRight, PlusIcon, SearchIcon, LinkIcon, TrashIcon, ArrowPathIcon, ExclamationTriangleIcon } from './Icons';
 import { useI18n } from '../i18n';
-import { getIdsByFuzzyTranslationMatch, getFileNameTranslation, hasTranslation } from '../utils/itemTranslator';
+import { getIdsByFuzzyTranslationMatch, getFileNameTranslation } from '../utils/itemTranslator';
 import { fuzzyMatch } from '../utils/helpers';
 import { HoverTooltip } from './HoverTooltip';
 
@@ -13,32 +14,42 @@ interface FileTreeProps {
   nodes: FileNode[];
   onSelectFile: (node: FileNode) => void;
   selectedPath: string | null;
+  selectedPaths?: string[];
+  onSelectPaths?: (paths: string[]) => void;
   onRefresh: () => void;
   dependencyMap: Record<string, string[]>;
   highlightedPath: string | null;
   dirtyPaths: string[];
   referencedPaths?: string[];
-  zoneColors?: Record<string, string>; // Directory Path -> Color string
-  conflicts?: Map<string, string[]>; // File Path -> Array of Conflicting Paths
+  zoneColors?: Record<string, string>;
+  conflicts?: Map<string, string[]>;
   onNavigate?: (path: string) => void;
   onPeekFile?: (path: string) => Promise<ScumJson | null>;
   
   // File Ops
-  onMoveNode?: (sourcePath: string, targetPath: string) => void;
-  onDeleteNode?: (path: string, kind: 'file' | 'directory') => void;
+  onMoveNodes?: (sourcePaths: string[], targetPath: string) => void;
+  onDeleteNodes?: (paths: string[]) => void;
   onRenameNode?: (path: string, newName: string, kind: 'file' | 'directory') => Promise<void>;
   onCreateFolder?: (parentPath: string) => Promise<void>;
   onCreateFile?: (parentPath: string, fileName: string) => Promise<void>;
   onImportDrop?: (files: DataTransferItemList, targetPath: string) => Promise<void>;
 }
 
+interface FlattenedNode {
+    id: string;
+    node: FileNode;
+    depth: number;
+    isExpanded: boolean;
+    parentPath: string | null;
+}
+
 interface EditingState {
-    path: string; // The path being edited (existing node)
+    path: string;
     value: string;
 }
 
 interface CreatingState {
-    parentPath: string; // Parent folder path
+    parentPath: string;
     kind: 'file' | 'directory';
     value: string;
 }
@@ -60,7 +71,6 @@ const InlineInput = ({
     useEffect(() => {
         if (inputRef.current) {
             inputRef.current.focus();
-            // Select filename without extension if file
             const dotIndex = value.lastIndexOf('.');
             if (kind === 'file' && dotIndex > 0) {
                 inputRef.current.setSelectionRange(0, dotIndex);
@@ -68,7 +78,7 @@ const InlineInput = ({
                 inputRef.current.select();
             }
         }
-    }, []);
+    }, [value, kind]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
@@ -151,25 +161,35 @@ const ContextMenu = ({ x, y, node, onClose, onAction }: { x: number, y: number, 
 
 const FileTreeNode: React.FC<{
   node: FileNode;
-  onSelectFile: (node: FileNode) => void;
-  selectedPath: string | null;
-  onRefresh: () => void;
   depth: number;
-  dependencyMap: Record<string, string[]>;
-  highlightedPath: string | null;
-  searchTerm: string;
-  dirtyPaths: string[];
-  referencedPaths?: string[];
-  zoneColors?: Record<string, string>;
-  effectiveZoneColor?: string;
-  conflicts?: Map<string, string[]>;
-  forceExpand?: boolean;
+  isExpanded: boolean;
+  onToggle: (node: FileNode) => void;
+  onSelect: (node: FileNode, multi: boolean, range: boolean) => void;
+  isSelected: boolean;
+  isHighlighted: boolean;
+  isReferenced: boolean;
+  isDirty: boolean;
+  isConflict: boolean;
+  conflictTooltip: string;
+  displayZoneColor?: string;
+  usageCount: number;
+  referencedBy: string[];
+  isDependency: boolean;
+  isDragOver: boolean;
   onHoverReference: (e: React.MouseEvent, paths: string[]) => void;
   onLeaveReference: () => void;
   onHoverFile?: (e: React.MouseEvent, node: FileNode) => void;
   onLeaveFile?: () => void;
   onContextMenu: (e: React.MouseEvent, node: FileNode) => void;
-  onDropNode: (e: React.DragEvent, targetNode: FileNode) => void;
+  onDragStart: (e: React.DragEvent, node: FileNode) => void;
+  onDragOver: (e: React.DragEvent, node: FileNode) => void;
+  onDragLeave: (e: React.DragEvent, node: FileNode) => void;
+  onDrop: (e: React.DragEvent, node: FileNode) => void;
+  ariaAttributes?: {
+    "aria-posinset": number;
+    "aria-setsize": number;
+    role: "listitem";
+  };
   
   // Edit Props
   editingState: EditingState | null;
@@ -178,82 +198,24 @@ const FileTreeNode: React.FC<{
   onCancelEdit: () => void;
   onCommitCreate: (val: string) => void;
   onCancelCreate: () => void;
-}> = React.memo(({ node, onSelectFile, selectedPath, onRefresh, depth, dependencyMap, highlightedPath, searchTerm, dirtyPaths, referencedPaths, zoneColors, effectiveZoneColor, conflicts, forceExpand, onHoverReference, onLeaveReference, onHoverFile, onLeaveFile, onContextMenu, onDropNode, editingState, creatingState, onCommitEdit, onCancelEdit, onCommitCreate, onCancelCreate }) => {
-  const [expanded, setExpanded] = useState(false);
+  style?: React.CSSProperties;
+}> = React.memo(({ 
+    node, depth, isExpanded, onToggle, onSelect, isSelected, isHighlighted, isReferenced, isDirty, isConflict, conflictTooltip, 
+    displayZoneColor, usageCount, referencedBy, isDependency, isDragOver, onHoverReference, onLeaveReference, onHoverFile, onLeaveFile, 
+    onContextMenu, onDragStart, onDragOver, onDragLeave, onDrop, editingState, creatingState, onCommitEdit, onCancelEdit, onCommitCreate, onCancelCreate, style, ariaAttributes 
+}) => {
   const { t } = useI18n();
-  const [isDragOver, setIsDragOver] = useState(false);
-
-  const isSelected = node.path === selectedPath;
-  const isHighlighted = node.path === highlightedPath;
-  const isReferenced = referencedPaths?.includes(node.path);
-  const isDirty = dirtyPaths.includes(node.path);
-  
-  const conflictPaths = conflicts?.get(node.path);
-  const isConflict = !!conflictPaths;
   
   const isEditingThis = editingState?.path === node.path;
   const isCreatingInside = creatingState?.parentPath === node.path;
 
-  // Zone Logic
-  const selfZoneColor = node.kind === 'directory' && zoneColors && zoneColors[node.path];
-  let displayZoneColor = effectiveZoneColor;
-  if (node.name === 'Zones.json' && zoneColors) {
-      const parentDir = node.path.substring(0, node.path.lastIndexOf('/'));
-      if (zoneColors[parentDir]) displayZoneColor = zoneColors[parentDir];
-  }
-  const nextEffectiveColor = selfZoneColor || effectiveZoneColor;
-
-  const referencedBy = dependencyMap[node.path] || [];
-  const usageCount = referencedBy.length;
-  const isDependency = usageCount > 0;
-
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (node.kind === 'directory') {
-      setExpanded(!expanded);
+      onToggle(node);
     } else {
-      onSelectFile(node);
+      onSelect(node, e.ctrlKey || e.metaKey, e.shiftKey);
     }
-  };
-
-  const handleDragStart = (e: React.DragEvent) => {
-      e.stopPropagation();
-      e.dataTransfer.setData('scum-file-path', node.path);
-      if (node.kind === 'file') {
-          const id = node.name.replace('.json', '');
-          e.dataTransfer.setData('text/plain', id);
-      }
-      e.dataTransfer.effectAllowed = 'move';
-      // Add opacity to dragged element visual
-      (e.target as HTMLElement).style.opacity = '0.5';
-  };
-
-  const handleDragEnd = (e: React.DragEvent) => {
-      (e.target as HTMLElement).style.opacity = '1';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (node.kind === 'directory') {
-          e.dataTransfer.dropEffect = 'move';
-          setIsDragOver(true);
-      }
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDragOver(false);
-      if (node.kind === 'directory') {
-          onDropNode(e, node);
-      }
   };
 
   const zoneIndicatorStyle = displayZoneColor ? {
@@ -261,34 +223,20 @@ const FileTreeNode: React.FC<{
       background: isSelected ? undefined : `linear-gradient(90deg, ${displayZoneColor}15, transparent)`,
   } : {};
 
-  useEffect(() => {
-    if (forceExpand) setExpanded(true);
-    if (node.kind === 'directory' && highlightedPath && highlightedPath.startsWith(node.path + '/')) setExpanded(true);
-    if (node.kind === 'directory' && selectedPath && selectedPath.startsWith(node.path + '/')) setExpanded(true);
-    if (node.kind === 'directory' && referencedPaths && referencedPaths.some(p => p.startsWith(node.path + '/'))) setExpanded(true);
-    // Expand if creating inside
-    if (node.kind === 'directory' && isCreatingInside) setExpanded(true);
-  }, [forceExpand, node.kind, highlightedPath, node.path, referencedPaths, selectedPath, isCreatingInside]);
-
-  const conflictTooltip = isConflict 
-      ? `${t('filetree.conflictTooltip')}\n\n${t('filetree.conflictingWith')}\n${conflictPaths.map(p => `- ${p}`).join('\n')}`
-      : node.name;
-
-  // File Name Translation Logic
   const translatedName = node.kind === 'file' ? getFileNameTranslation(node.name) : node.name;
   const isTranslated = translatedName !== node.name && translatedName !== node.name.replace('.json', '');
   
   return (
-    <div className="select-none relative">
+    <div className="select-none relative" style={style} {...ariaAttributes}>
       <div
-        className={`flex items-center group py-1.5 px-2 cursor-pointer transition-all duration-200 text-sm relative border-l-[3px] rounded-r-md my-[1px]
+        className={`flex items-center group py-1.5 px-2 cursor-pointer transition-all duration-200 text-sm relative border-l-[3px] rounded-r-md my-[1px] h-full
           ${isSelected 
-            ? 'bg-gradient-to-r from-scum-accent/20 to-transparent text-scum-accent border-scum-accent font-bold shadow-[inset_0_0_20px_rgba(6,182,212,0.1)]' 
+            ? 'bg-gradient-to-r from-scum-accent/20 to-transparent text-scum-accent border-scum-accent font-bold shadow-[inset_0_0_20px_rgba(6,182,212,0.15)]' 
             : 'border-transparent'
           }
           ${isHighlighted && !isSelected ? 'bg-pink-500/20 text-pink-300 animate-pulse border-pink-500' : ''}
           ${isReferenced && !isSelected && !isHighlighted ? 'bg-indigo-500/10 border-indigo-500/50' : ''}
-          ${isDragOver ? 'bg-green-500/30 border-green-400 border-dashed z-50 scale-[1.02] shadow-lg ring-1 ring-green-400/50' : ''}
+          ${isDragOver ? 'bg-green-500/30 border-green-400 border-dashed z-50 scale-[1.01] shadow-lg ring-1 ring-green-400/50' : ''}
           ${isConflict ? 'text-orange-400' : ''}
           ${!isSelected && !isHighlighted && !isDragOver ? 'hover:bg-white/5 hover:text-gray-200 text-gray-400' : ''}
         `}
@@ -300,17 +248,16 @@ const FileTreeNode: React.FC<{
         onMouseEnter={(e) => node.kind === 'file' && onHoverFile && onHoverFile(e, node)}
         onMouseLeave={() => node.kind === 'file' && onLeaveFile && onLeaveFile()}
         draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDragStart={(e) => onDragStart(e, node)}
+        onDragOver={(e) => onDragOver(e, node)}
+        onDragLeave={(e) => onDragLeave(e, node)}
+        onDrop={(e) => onDrop(e, node)}
         onContextMenu={(e) => onContextMenu(e, node)}
         title={conflictTooltip}
       >
         {depth > 0 && <div className="absolute left-0 top-0 bottom-0 w-px bg-white/5" style={{ left: `${depth * 14}px` }}></div>}
 
-        <span className={`mr-1.5 opacity-70 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}>
+        <span className={`mr-1.5 opacity-70 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
           {node.kind === 'directory' ? <ChevronRight className="w-3 h-3" /> : <span className="w-3 inline-block" />}
         </span>
         
@@ -343,7 +290,6 @@ const FileTreeNode: React.FC<{
                             {translatedName}
                         </span>
                         
-                        {/* Show Original Filename if translated, but visually distinct */}
                         {isTranslated && node.kind === 'file' && (
                             <span className="text-[9px] opacity-50 font-mono truncate tracking-tight -mt-0.5">
                                 {node.name}
@@ -378,89 +324,224 @@ const FileTreeNode: React.FC<{
             )}
         </div>
       </div>
-
-      {/* Children + Ghost Node */}
-      {node.kind === 'directory' && expanded && (
-        <div className="animate-slide-down border-l border-white/5 ml-[7px]">
-          {/* Creating Node (Ghost) */}
-          {isCreatingInside && (
-              <div 
-                className="flex items-center py-1.5 px-2 text-sm border-l-[3px] border-transparent my-[1px] animate-fade-in"
-                style={{ paddingLeft: `${(depth + 1) * 14 + 8}px` }}
-              >
-                  <span className="mr-1.5 w-3 inline-block"></span>
-                  <span className="mr-2 text-scum-accent animate-bounce"><PlusIcon className="w-3 h-3" /></span>
-                  <div className="flex-1">
-                      <InlineInput 
-                          value={creatingState?.value || ""} 
-                          onSubmit={onCommitCreate} 
-                          onCancel={onCancelCreate}
-                          kind={creatingState?.kind || 'file'}
-                      />
-                  </div>
-              </div>
-          )}
-
-          {node.children && node.children.map((child, idx) => (
-            <FileTreeNode
-              key={child.path}
-              node={child}
-              onSelectFile={onSelectFile}
-              selectedPath={selectedPath}
-              onRefresh={onRefresh}
-              depth={depth + 1}
-              dependencyMap={dependencyMap}
-              highlightedPath={highlightedPath}
-              searchTerm={searchTerm}
-              dirtyPaths={dirtyPaths}
-              referencedPaths={referencedPaths}
-              zoneColors={zoneColors}
-              effectiveZoneColor={nextEffectiveColor} 
-              conflicts={conflicts}
-              forceExpand={forceExpand}
-              onHoverReference={onHoverReference}
-              onLeaveReference={onLeaveReference}
-              onHoverFile={onHoverFile}
-              onLeaveFile={onLeaveFile}
-              onContextMenu={onContextMenu}
-              onDropNode={onDropNode}
-              editingState={editingState}
-              creatingState={creatingState}
-              onCommitEdit={onCommitEdit}
-              onCancelEdit={onCancelEdit}
-              onCommitCreate={onCommitCreate}
-              onCancelCreate={onCancelCreate}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 });
 
-export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selectedPath, onRefresh, dependencyMap, highlightedPath, dirtyPaths, referencedPaths, zoneColors, conflicts, onNavigate, onPeekFile, onMoveNode, onDeleteNode, onRenameNode, onCreateFolder, onCreateFile, onImportDrop }) => {
+export const FileTree: React.FC<FileTreeProps> = ({ 
+    nodes, onSelectFile, selectedPath, selectedPaths = [], onSelectPaths, onRefresh, dependencyMap, highlightedPath, dirtyPaths, referencedPaths, zoneColors, conflicts, onNavigate, onPeekFile, onMoveNodes, onDeleteNodes, onRenameNode, onCreateFolder, onCreateFile, onImportDrop 
+}) => {
   const [searchTerm, setSearchTerm] = useState("");
   const { t } = useI18n();
-  const [searchMode, setSearchMode] = useState<'name' | 'content'>('name');
-  const [contentMatches, setContentMatches] = useState<Set<string> | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
   
-  // Context Menu State
   const [ctxMenu, setCtxMenu] = useState<{ x: number, y: number, node: FileNode } | null>(null);
-
-  // Edit/Create State
   const [editingState, setEditingState] = useState<EditingState | null>(null);
   const [creatingState, setCreatingState] = useState<CreatingState | null>(null);
 
-  // Tooltip & Preview States
   const [tooltipState, setTooltipState] = useState<{ visible: boolean; x: number; y: number; paths: string[]; }>({ visible: false, x: 0, y: 0, paths: [] });
   const [previewState, setPreviewState] = useState<{ x: number, y: number, content: ScumJson, path: string } | null>(null);
   const tooltipTimeout = useRef<number | null>(null);
   const previewTimeoutRef = useRef<number | null>(null);
   const closePreviewTimeoutRef = useRef<number | null>(null);
+  
+  const listRef = useRef<ListImperativeAPI>(null);
+
+  useEffect(() => {
+      const newExpanded = new Set(expandedPaths);
+      let changed = false;
+
+      const checkExpand = (path: string) => {
+          const parts = path.split('/');
+          let current = "";
+          for (let i = 0; i < parts.length - 1; i++) {
+              current = current ? `${current}/${parts[i]}` : parts[i];
+              if (!newExpanded.has(current)) {
+                  newExpanded.add(current);
+                  changed = true;
+              }
+          }
+      };
+
+      if (highlightedPath) checkExpand(highlightedPath);
+      if (selectedPath) checkExpand(selectedPath);
+      if (referencedPaths) referencedPaths.forEach(checkExpand);
+      if (creatingState) checkExpand(creatingState.parentPath);
+
+      if (changed) setExpandedPaths(newExpanded);
+  }, [highlightedPath, selectedPath, referencedPaths, creatingState]);
+
+  const togglePath = useCallback((path: string) => {
+      setExpandedPaths(prev => {
+          const next = new Set(prev);
+          if (next.has(path)) next.delete(path);
+          else next.add(path);
+          return next;
+      });
+  }, []);
+
+  const flattenedNodes = useMemo(() => {
+      const result: FlattenedNode[] = [];
+      
+      const traverse = (list: FileNode[], depth: number, parentPath: string | null) => {
+          list.forEach(node => {
+              const isExpanded = expandedPaths.has(node.path);
+              result.push({ id: node.path, node, depth, isExpanded: !!isExpanded, parentPath });
+              
+              if (node.kind === 'directory' && isExpanded && node.children) {
+                  traverse(node.children, depth + 1, node.path);
+              }
+          });
+      };
+
+      const filterTree = (nodes: FileNode[]): FileNode[] => {
+          if (!searchTerm) return nodes;
+          const transMatches = getIdsByFuzzyTranslationMatch(searchTerm);
+
+          return nodes.map(node => {
+              if (node.kind === 'file') {
+                  const nameMatch = fuzzyMatch(node.name, searchTerm);
+                  const transMatch = transMatches.some(tId => node.name.toLowerCase().includes(tId.toLowerCase()));
+                  const fileTrans = getFileNameTranslation(node.name);
+                  const fileTransMatch = fileTrans.toLowerCase().includes(searchTerm.toLowerCase());
+                  return (nameMatch || transMatch || fileTransMatch) ? node : null;
+              } else if (node.kind === 'directory' && node.children) {
+                  const children = filterTree(node.children);
+                  if (children.length > 0) return { ...node, children };
+                  if (fuzzyMatch(node.name, searchTerm)) return { ...node, children: node.children };
+                  return null;
+              }
+              return null;
+          }).filter(Boolean) as FileNode[];
+      };
+
+      const filtered = filterTree(nodes);
+      traverse(filtered, 0, null);
+      return result;
+  }, [nodes, expandedPaths, searchTerm]);
+
+  const handleSelect = useCallback((node: FileNode, multi: boolean, range: boolean) => {
+      if (!onSelectPaths) {
+          onSelectFile(node);
+          return;
+      }
+
+      let newSelection = [...selectedPaths];
+      if (range && selectedPaths.length > 0) {
+          const lastSelected = selectedPaths[selectedPaths.length - 1];
+          const lastIdx = flattenedNodes.findIndex(n => n.node.path === lastSelected);
+          const currIdx = flattenedNodes.findIndex(n => n.node.path === node.path);
+          if (lastIdx !== -1 && currIdx !== -1) {
+              const start = Math.min(lastIdx, currIdx);
+              const end = Math.max(lastIdx, currIdx);
+              const rangePaths = flattenedNodes.slice(start, end + 1).map(n => n.node.path);
+              newSelection = Array.from(new Set([...newSelection, ...rangePaths]));
+          }
+      } else if (multi) {
+          if (newSelection.includes(node.path)) {
+              newSelection = newSelection.filter(p => p !== node.path);
+          } else {
+              newSelection.push(node.path);
+          }
+      } else {
+          newSelection = [node.path];
+      }
+      onSelectPaths(newSelection);
+      onSelectFile(node);
+  }, [flattenedNodes, selectedPaths, onSelectPaths, onSelectFile]);
+
+  const handleDragStart = (e: React.DragEvent, node: FileNode) => {
+      e.stopPropagation();
+      const pathsToMove = selectedPaths.includes(node.path) ? selectedPaths : [node.path];
+      e.dataTransfer.setData('scum-file-paths', JSON.stringify(pathsToMove));
+      e.dataTransfer.effectAllowed = 'move';
+      
+      const ghost = document.createElement('div');
+      ghost.className = "bg-scum-accent/20 border border-scum-accent text-scum-accent px-3 py-1 rounded-lg text-xs font-bold shadow-neon pointer-events-none";
+      ghost.innerText = pathsToMove.length > 1 ? t('filetree.movingItems', [pathsToMove.length]) : node.name;
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 0, 0);
+      setTimeout(() => document.body.removeChild(ghost), 0);
+  };
+
+  const handleDropNode = useCallback((e: React.DragEvent, targetNode: FileNode) => {
+      setDragOverPath(null);
+      const pathsJson = e.dataTransfer.getData('scum-file-paths');
+      if (pathsJson) {
+          const srcPaths = JSON.parse(pathsJson) as string[];
+          const validPaths = srcPaths.filter(p => !targetNode.path.startsWith(p));
+          if (validPaths.length > 0 && onMoveNodes) {
+              onMoveNodes(validPaths, targetNode.path);
+          }
+          return;
+      }
+
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0 && onImportDrop) {
+          onImportDrop(e.dataTransfer.items, targetNode.path);
+      }
+  }, [onMoveNodes, onImportDrop]);
+
+  const Row = ({ index, style, ariaAttributes }: RowComponentProps) => {
+      const { node, depth, isExpanded } = flattenedNodes[index];
+      const isSelected = selectedPaths.includes(node.path) || node.path === selectedPath;
+      const isHighlighted = node.path === highlightedPath;
+      const isReferenced = !!referencedPaths?.includes(node.path);
+      const isDirty = dirtyPaths.includes(node.path);
+      const conflictPaths = conflicts?.get(node.path);
+      const isConflict = !!conflictPaths;
+      
+      let displayZoneColor = zoneColors?.[node.path];
+      if (!displayZoneColor && node.name === 'Zones.json') {
+          const parentDir = node.path.substring(0, node.path.lastIndexOf('/'));
+          displayZoneColor = zoneColors?.[parentDir];
+      }
+
+      const referencedBy = dependencyMap[node.path] || [];
+      const usageCount = referencedBy.length;
+      const isDependency = usageCount > 0;
+
+      return (
+          <FileTreeNode
+            style={style}
+            ariaAttributes={ariaAttributes}
+            node={node}
+            depth={depth}
+            isExpanded={!!isExpanded}
+            onToggle={() => togglePath(node.path)}
+            onSelect={handleSelect}
+            isSelected={isSelected}
+            isHighlighted={isHighlighted}
+            isReferenced={isReferenced}
+            isDirty={isDirty}
+            isConflict={isConflict}
+            conflictTooltip={isConflict ? `${t('filetree.conflictTooltip')}\n\n${t('filetree.conflictingWith')}\n${conflictPaths.map(p => `- ${p}`).join('\n')}` : node.name}
+            displayZoneColor={displayZoneColor}
+            usageCount={usageCount}
+            referencedBy={referencedBy}
+            isDependency={isDependency}
+            isDragOver={dragOverPath === node.path}
+            onHoverReference={handleHoverReference}
+            onLeaveReference={handleLeaveReference}
+            onHoverFile={handleHoverFile}
+            onLeaveFile={handleLeaveFile}
+            onContextMenu={handleContextMenu}
+            onDragStart={handleDragStart}
+            onDragOver={(e) => { e.preventDefault(); if (node.kind === 'directory') setDragOverPath(node.path); }}
+            onDragLeave={() => setDragOverPath(null)}
+            onDrop={handleDropNode}
+            editingState={editingState}
+            creatingState={creatingState}
+            onCommitEdit={commitEdit}
+            onCancelEdit={() => setEditingState(null)}
+            onCommitCreate={commitCreate}
+            onCancelCreate={() => setCreatingState(null)}
+          />
+      );
+  };
 
   const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
       e.preventDefault();
-      // If editing/creating, block menu
       if (editingState || creatingState) return;
       setCtxMenu({ x: e.clientX, y: e.clientY, node });
   }, [editingState, creatingState]);
@@ -473,8 +554,9 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
       if (action === 'rename') {
           setEditingState({ path: node.path, value: node.name });
       } else if (action === 'delete') {
-          if (confirm(t('common.confirmDelete') + `\n${node.path}`)) {
-              if (onDeleteNode) onDeleteNode(node.path, node.kind);
+          const pathsToDelete = selectedPaths.includes(node.path) ? selectedPaths : [node.path];
+          if (confirm(t('common.confirmDelete') + `\n${pathsToDelete.length} ${t('common.items')}`)) {
+              if (onDeleteNodes) onDeleteNodes(pathsToDelete);
           }
       } else if (action === 'newFile') {
           setCreatingState({ parentPath: node.path, kind: 'file', value: 'NewFile.json' });
@@ -485,11 +567,9 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
 
   const commitEdit = async (newValue: string) => {
       if (editingState && onRenameNode && newValue && newValue !== editingState.value) {
-          // Detect kind from current node via path
           const ext = editingState.value.endsWith('.json') ? '.json' : (editingState.value.endsWith('.ini') ? '.ini' : '');
           let finalName = newValue;
           if (ext && !newValue.endsWith(ext)) finalName += ext;
-          
           await onRenameNode(editingState.path, finalName, ext ? 'file' : 'directory');
       }
       setEditingState(null);
@@ -498,11 +578,8 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
   const commitCreate = async (newValue: string) => {
       if (creatingState && newValue) {
           if (creatingState.kind === 'file') {
-              // Support .json and .ini
               let name = newValue;
-              if (!name.endsWith('.json') && !name.endsWith('.ini')) {
-                  name += '.json';
-              }
+              if (!name.endsWith('.json') && !name.endsWith('.ini')) name += '.json';
               if (onCreateFile) await onCreateFile(creatingState.parentPath, name);
           } else {
               if (onCreateFolder) await onCreateFolder(creatingState.parentPath + '/' + newValue);
@@ -511,50 +588,18 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
       setCreatingState(null);
   };
 
-  const handleDropNode = useCallback((e: React.DragEvent, targetNode: FileNode) => {
-      // 1. Internal Move
-      const srcPath = e.dataTransfer.getData('scum-file-path');
-      if (srcPath) {
-          // Prevent dropping parent into child
-          if (targetNode.path.startsWith(srcPath + '/')) {
-              console.warn("Cannot drop parent directory into its own child.");
-              return;
-          }
-          if (srcPath !== targetNode.path && onMoveNode) {
-              onMoveNode(srcPath, targetNode.path);
-          }
-          return;
-      }
-
-      // 2. OS Import Drop
-      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-          if (onImportDrop) {
-              onImportDrop(e.dataTransfer.items, targetNode.path);
-          }
-      }
-  }, [onMoveNode, onImportDrop]);
-
-  // Root level OS drop
-  const handleRootDrop = (e: React.DragEvent) => {
-      e.preventDefault();
-      // Only handle if it's NOT an internal move (no scum-file-path)
-      const srcPath = e.dataTransfer.getData('scum-file-path');
-      if (!srcPath && e.dataTransfer.items && e.dataTransfer.items.length > 0 && onImportDrop) {
-          onImportDrop(e.dataTransfer.items, ""); 
-      }
-  };
-
-  // Re-implementing essential handlers
   const handleHoverReference = (e: React.MouseEvent, paths: string[]) => {
       if (tooltipTimeout.current) clearTimeout(tooltipTimeout.current);
       const rect = e.currentTarget.getBoundingClientRect();
       setTooltipState({ visible: true, x: rect.right + 10, y: rect.top, paths });
   };
+
   const handleLeaveReference = () => {
       tooltipTimeout.current = window.setTimeout(() => setTooltipState(p => ({ ...p, visible: false })), 300);
   };
+
   const handleHoverFile = useCallback((e: React.MouseEvent, node: FileNode) => {
-    if (editingState || creatingState) return; // Don't show preview while editing
+    if (editingState || creatingState) return;
     if (!onPeekFile) return;
     if (closePreviewTimeoutRef.current) clearTimeout(closePreviewTimeoutRef.current);
     if (previewState && previewState.path === node.path) return;
@@ -566,54 +611,14 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
          if (content) setPreviewState({ x: rect.right + 15, y: rect.top, content, path });
     }, 600);
   }, [onPeekFile, previewState, editingState, creatingState]);
+
   const handleLeaveFile = useCallback(() => {
     if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
     closePreviewTimeoutRef.current = window.setTimeout(() => setPreviewState(null), 300);
   }, []);
 
-  const flattenNodes = (list: FileNode[]): FileNode[] => {
-      let result: FileNode[] = [];
-      list.forEach(n => {
-          if (n.kind === 'file') result.push(n);
-          if (n.kind === 'directory' && n.children) result = result.concat(flattenNodes(n.children));
-      });
-      return result;
-  };
-
-  // Filter logic
-  const filteredNodes = React.useMemo(() => {
-      if (!searchTerm && !contentMatches) return nodes;
-      let transMatches: string[] = [];
-      if (searchMode === 'name' && searchTerm) transMatches = getIdsByFuzzyTranslationMatch(searchTerm);
-
-      const filterTree = (nodes: FileNode[]): FileNode[] => {
-          return nodes.map(node => {
-              if (node.kind === 'file') {
-                  if (contentMatches) return contentMatches.has(node.path) ? node : null;
-                  if (searchMode === 'name' && searchTerm) {
-                      const nameMatch = fuzzyMatch(node.name, searchTerm);
-                      // Check Translation
-                      const transMatch = transMatches.some(tId => node.name.toLowerCase().includes(tId.toLowerCase()));
-                      // Also check file name translation logic (e.g. Farming -> 农业)
-                      const fileTrans = getFileNameTranslation(node.name);
-                      const fileTransMatch = fileTrans.toLowerCase().includes(searchTerm.toLowerCase());
-                      
-                      return (nameMatch || transMatch || fileTransMatch) ? node : null;
-                  }
-                  return null;
-              } else if (node.kind === 'directory' && node.children) {
-                  const children = filterTree(node.children);
-                  if (children.length > 0) return { ...node, children };
-                  return null;
-              }
-              return null;
-          }).filter(Boolean) as FileNode[];
-      };
-      return filterTree(nodes);
-  }, [nodes, searchTerm, contentMatches, searchMode]);
-
   return (
-    <div className="flex flex-col h-full bg-[#0b1120] text-gray-300" onDrop={handleRootDrop} onDragOver={e => e.preventDefault()}>
+    <div className="flex flex-col h-full bg-[#0b1120] text-gray-300" onDrop={(e) => { e.preventDefault(); if (!e.dataTransfer.getData('scum-file-paths') && onImportDrop) onImportDrop(e.dataTransfer.items, ""); }} onDragOver={e => e.preventDefault()}>
         <div className="p-3 border-b border-scum-700/50 bg-[#0f172a]/80 backdrop-blur-sm flex flex-col gap-2">
             <div className="relative group">
                 <input 
@@ -627,40 +632,21 @@ export const FileTree: React.FC<FileTreeProps> = ({ nodes, onSelectFile, selecte
             </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-1 pb-10">
-             {flattenNodes(filteredNodes).length === 0 && (searchTerm) ? (
+        <div className="flex-1 p-1 pb-10 overflow-hidden">
+             {flattenedNodes.length === 0 ? (
                  <div className="text-center py-4 text-xs text-gray-500 italic">{t('explorer.noMatch')}</div>
              ) : (
-                filteredNodes.map((node) => (
-                    <FileTreeNode
-                        key={node.path}
-                        node={node}
-                        onSelectFile={onSelectFile}
-                        selectedPath={selectedPath}
-                        onRefresh={onRefresh}
-                        depth={0}
-                        dependencyMap={dependencyMap}
-                        highlightedPath={highlightedPath}
-                        searchTerm={searchTerm}
-                        dirtyPaths={dirtyPaths}
-                        referencedPaths={referencedPaths}
-                        zoneColors={zoneColors}
-                        conflicts={conflicts}
-                        forceExpand={!!searchTerm}
-                        onHoverReference={handleHoverReference}
-                        onLeaveReference={handleLeaveReference}
-                        onHoverFile={handleHoverFile}
-                        onLeaveFile={handleLeaveFile}
-                        onContextMenu={handleContextMenu}
-                        onDropNode={handleDropNode}
-                        editingState={editingState}
-                        creatingState={creatingState}
-                        onCommitEdit={commitEdit}
-                        onCancelEdit={() => setEditingState(null)}
-                        onCommitCreate={commitCreate}
-                        onCancelCreate={() => setCreatingState(null)}
+                <AutoSizer renderProp={({ height, width }) => (
+                    <List
+                        listRef={listRef}
+                        rowCount={flattenedNodes.length}
+                        rowHeight={36}
+                        style={{ height: height || 0, width: width || 0 }}
+                        className="custom-scrollbar"
+                        rowComponent={Row}
+                        rowProps={{}}
                     />
-                ))
+                )} />
              )}
         </div>
 

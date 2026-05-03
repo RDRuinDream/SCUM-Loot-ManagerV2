@@ -1,0 +1,21 @@
+name = "scum-loot-manager-v2"
+main = "worker/index.ts"
+compatibility_date = "2024-04-05"
+
+[build]
+command = "npm run build:worker"
+
+[site]
+bucket = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "scum-loot-manager-db"
+database_id = "YOUR_D1_DATABASE_ID_HERE"
+
+[[kv_namespaces]]
+binding = "BACKUPS"
+id = "YOUR_KV_NAMESPACE_ID_HERE"
+
+[vars]
+ENVIRONMENT = "production"

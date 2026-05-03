@@ -10,18 +10,16 @@ import { serverSettingsDescriptions } from './translations/serverSettingsDescrip
 export type TranslationCategory = 'item' | 'node' | 'file' | 'global' | 'setting' | 'setting_desc';
 
 export interface TranslationEntry {
+    key: string;
     text: string;
     categories: TranslationCategory[];
     masked?: boolean; // New flag: if true, this entry effectively "deletes" a default translation
 }
 
-export interface TranslationData {
-    [key: string]: TranslationEntry;
-}
-
 const STORAGE_KEY_V1 = 'scum_translations';
 const STORAGE_KEY_V2 = 'scum_translations_v2'; 
 const STORAGE_KEY_V3 = 'scum_translations_v3'; 
+const STORAGE_KEY_V4 = 'scum_translations_v4'; // New version for array structure
 const UPDATE_EVENT = 'scum_translations_updated';
 
 // In-memory lookup maps
@@ -32,7 +30,7 @@ let settingsMap: Record<string, string> = {};
 let settingDescMap: Record<string, string> = {};
 let globalMap: Record<string, string> = {};
 
-let customData: TranslationData = {};
+let customData: TranslationEntry[] = [];
 
 const normalize = (key: string) => key.toLowerCase().trim();
 
@@ -51,22 +49,35 @@ const loadTranslations = () => {
 
     globalMap = {}; 
 
-    // 2. Migration Logic (Simplified for V3 existing)
+    // 2. Migration Logic (V3 object to V4 array)
     try {
-        const v3Stored = localStorage.getItem(STORAGE_KEY_V3);
-        if (v3Stored) {
-            customData = JSON.parse(v3Stored);
+        const v4Stored = localStorage.getItem(STORAGE_KEY_V4);
+        if (v4Stored) {
+            customData = JSON.parse(v4Stored);
         } else {
-            customData = {};
+            const v3Stored = localStorage.getItem(STORAGE_KEY_V3);
+            if (v3Stored) {
+                const oldData = JSON.parse(v3Stored);
+                customData = Object.entries(oldData).map(([key, entry]: [string, any]) => ({
+                    key,
+                    ...entry
+                }));
+                // Save migrated data
+                localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
+            } else {
+                customData = [];
+            }
         }
     } catch (e) {
         console.warn("Translation load error", e);
-        customData = {};
+        customData = [];
     }
 
-    // 3. Populate Maps based on custom data overrides
-    Object.entries(customData).forEach(([key, entry]) => {
-        const { text, categories, masked } = entry;
+    // 3. Populate Maps based on custom data overrides (Priority: First in array wins)
+    // We iterate backwards so that the first items in the array (highest priority) 
+    // are applied last and thus override previous ones in the map.
+    [...customData].reverse().forEach((entry) => {
+        const { key, text, categories, masked } = entry;
         
         // If masked, we map it to the key itself (or empty string for descriptions) to simulate deletion
         const effectiveText = masked ? (categories.includes('setting_desc') ? "" : key) : text;
@@ -92,7 +103,7 @@ loadTranslations();
 
 if (typeof window !== 'undefined') {
     window.addEventListener('storage', (e) => {
-        if (e.key === STORAGE_KEY_V3) {
+        if (e.key === STORAGE_KEY_V4) {
             loadTranslations();
             window.dispatchEvent(new Event(UPDATE_EVENT));
         }
@@ -111,7 +122,8 @@ const lookup = (key: string, primaryMap: Record<string, string>): string | null 
     if (primaryMap[key]) return primaryMap[key];
     
     // 2. Check Custom Masking specifically if not found above but exists in customData as masked
-    if (customData[key] && customData[key].masked) return key;
+    const customMatch = customData.find(d => d.key === key);
+    if (customMatch && customMatch.masked) return key;
 
     // 3. Global Map
     if (globalMap[key]) return globalMap[key];
@@ -149,7 +161,8 @@ export const hasTranslation = (id: string): boolean => {
     // BUT functionally it returns the ID. 
     // Here we return true if there is a translation entry (default or custom active).
     // If masked, we technically "have" a translation entry that says "don't translate".
-    if (customData[id]?.masked) return false; 
+    const customMatch = customData.find(d => d.key === id);
+    if (customMatch?.masked) return false; 
 
     if (itemMap[id] || nodeMap[id] || fileMap[id] || globalMap[id] || settingsMap[id]) return true;
     const lower = normalize(id);
@@ -160,10 +173,11 @@ export const hasTranslation = (id: string): boolean => {
 // --- Management ---
 
 export const saveTranslation = (key: string, value: string, category: TranslationCategory) => {
-    const existing = customData[key];
+    const existingIndex = customData.findIndex(d => d.key === key);
     let newCategories: TranslationCategory[] = [];
 
-    if (existing) {
+    if (existingIndex !== -1) {
+        const existing = customData[existingIndex];
         newCategories = [...existing.categories];
         if (category === 'global') {
             newCategories = ['global'];
@@ -172,19 +186,21 @@ export const saveTranslation = (key: string, value: string, category: Translatio
                 newCategories.push(category);
             }
         }
+        customData[existingIndex] = { key, text: value, categories: newCategories, masked: false };
     } else {
         newCategories = [category];
+        // New translations go to the TOP (highest priority)
+        customData.unshift({ key, text: value, categories: newCategories, masked: false });
     }
 
-    customData[key] = { text: value, categories: newCategories, masked: false };
-    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
+    localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
     loadTranslations();
     window.dispatchEvent(new Event(UPDATE_EVENT));
 };
 
 export const toggleTranslationCategory = (key: string, category: TranslationCategory, value: string) => {
-    const existing = customData[key];
-    let newCategories: TranslationCategory[] = existing ? [...existing.categories] : [];
+    const existingIndex = customData.findIndex(d => d.key === key);
+    let newCategories: TranslationCategory[] = existingIndex !== -1 ? [...customData[existingIndex].categories] : [];
     
     if (category === 'global') {
         if (newCategories.includes('global')) return; 
@@ -202,8 +218,12 @@ export const toggleTranslationCategory = (key: string, category: TranslationCate
     if (newCategories.length === 0) {
         deleteTranslation(key); // Use smart delete
     } else {
-        customData[key] = { text: value, categories: newCategories, masked: false };
-        localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
+        if (existingIndex !== -1) {
+            customData[existingIndex] = { key, text: value, categories: newCategories, masked: false };
+        } else {
+            customData.unshift({ key, text: value, categories: newCategories, masked: false });
+        }
+        localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
         loadTranslations();
         window.dispatchEvent(new Event(UPDATE_EVENT));
     }
@@ -221,20 +241,42 @@ export const deleteTranslation = (key: string) => {
         isDefault = true;
     }
 
+    const existingIndex = customData.findIndex(d => d.key === key);
+
     if (isDefault) {
         // Mask it instead of deleting
-        const current = customData[key];
-        customData[key] = { 
+        const current = existingIndex !== -1 ? customData[existingIndex] : null;
+        const maskedEntry: TranslationEntry = { 
+            key,
             text: key, 
-            categories: current ? current.categories : ['global'], // Keep categories or default to global
+            categories: current ? current.categories : (['global'] as TranslationCategory[]), // Keep categories or default to global
             masked: true 
         };
+        
+        if (existingIndex !== -1) {
+            customData[existingIndex] = maskedEntry;
+        } else {
+            customData.unshift(maskedEntry);
+        }
     } else {
         // Truly delete
-        delete customData[key];
+        if (existingIndex !== -1) {
+            customData.splice(existingIndex, 1);
+        }
     }
 
-    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
+    localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
+    loadTranslations();
+    window.dispatchEvent(new Event(UPDATE_EVENT));
+};
+
+export const reorderTranslations = (startIndex: number, endIndex: number) => {
+    const result = Array.from(customData);
+    const [removed] = result.splice(startIndex, 1);
+    result.splice(endIndex, 0, removed);
+    
+    customData = result;
+    localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
     loadTranslations();
     window.dispatchEvent(new Event(UPDATE_EVENT));
 };
@@ -253,15 +295,30 @@ export const bulkDeleteTranslations = (keys: string[]) => {
 
 export const importTranslations = (jsonContent: any) => {
     try {
-        Object.entries(jsonContent).forEach(([k, v]: [string, any]) => {
-            if (typeof v === 'string') {
-                customData[k] = { text: v, categories: ['global'], masked: false };
-            } else if (typeof v === 'object' && (v.text || v.masked)) {
-                const cats = Array.isArray(v.categories) ? v.categories : (v.category ? [v.category] : ['global']);
-                customData[k] = { text: v.text || k, categories: cats, masked: !!v.masked };
-            }
-        });
-        localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(customData));
+        const newData: TranslationEntry[] = [];
+        
+        if (Array.isArray(jsonContent)) {
+            // New V4 format
+            jsonContent.forEach(v => {
+                if (v.key && (v.text || v.masked)) {
+                    const cats = Array.isArray(v.categories) ? v.categories : ['global'];
+                    newData.push({ key: v.key, text: v.text || v.key, categories: cats, masked: !!v.masked });
+                }
+            });
+        } else {
+            // Old V3 format
+            Object.entries(jsonContent).forEach(([k, v]: [string, any]) => {
+                if (typeof v === 'string') {
+                    newData.push({ key: k, text: v, categories: ['global'], masked: false });
+                } else if (typeof v === 'object' && (v.text || v.masked)) {
+                    const cats = Array.isArray(v.categories) ? v.categories : (v.category ? [v.category] : ['global']);
+                    newData.push({ key: k, text: v.text || k, categories: cats, masked: !!v.masked });
+                }
+            });
+        }
+
+        customData = newData;
+        localStorage.setItem(STORAGE_KEY_V4, JSON.stringify(customData));
         loadTranslations();
         window.dispatchEvent(new Event(UPDATE_EVENT));
         return true;
@@ -275,44 +332,44 @@ export const exportTranslations = (): string => {
 };
 
 export const resetTranslations = () => {
-    localStorage.removeItem(STORAGE_KEY_V3);
+    localStorage.removeItem(STORAGE_KEY_V4);
     loadTranslations();
     window.dispatchEvent(new Event(UPDATE_EVENT));
 };
 
 // Returns merged list of defaults and customs. 
 // If a default is masked, it is returned with isMasked=true and value=key
-export const getAllTranslations = (modeFilter?: 'items' | 'server' | 'files'): { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean }[] => {
-    const list: { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean }[] = [];
+export const getAllTranslations = (modeFilter?: 'items' | 'server' | 'files'): { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean, priorityIndex?: number }[] => {
+    const list: { key: string, value: string, categories: TranslationCategory[], isCustom: boolean, isMasked: boolean, priorityIndex?: number }[] = [];
     const seen = new Set<string>();
 
     // Helper to check if category matches mode
     const matchesMode = (cats: TranslationCategory[]) => {
         if (!modeFilter) return true;
-        if (cats.includes('global')) return true; // Global shows everywhere? Or maybe restrictive? Let's show everywhere.
+        if (cats.includes('global')) return true; 
         if (modeFilter === 'items') return cats.includes('item') || cats.includes('node');
         if (modeFilter === 'server') return cats.includes('setting') || cats.includes('setting_desc');
         if (modeFilter === 'files') return cats.includes('file');
         return false;
     };
 
-    // 1. Add Custom Data (including masks)
-    Object.entries(customData).forEach(([k, v]) => {
+    // 1. Add Custom Data (including masks) - Keep original order for priority display
+    customData.forEach((v, index) => {
         if (!matchesMode(v.categories)) return;
         
         list.push({ 
-            key: k, 
-            value: v.masked ? (v.categories.includes('setting_desc') ? "" : k) : v.text, 
+            key: v.key, 
+            value: v.masked ? (v.categories.includes('setting_desc') ? "" : v.key) : v.text, 
             categories: v.categories, 
             isCustom: true,
-            isMasked: !!v.masked
+            isMasked: !!v.masked,
+            priorityIndex: index
         });
-        seen.add(k);
+        seen.add(v.key);
     });
 
     // 2. Add Defaults (if not seen)
     const addDefaults = (map: Record<string, string>, cat: TranslationCategory, mapPrefix = "") => {
-        // Optimization: Only scan maps relevant to mode
         if (modeFilter === 'items' && !['item', 'node'].includes(cat)) return;
         if (modeFilter === 'server' && !['setting', 'setting_desc'].includes(cat)) return;
         if (modeFilter === 'files' && cat !== 'file') return;
@@ -330,9 +387,15 @@ export const getAllTranslations = (modeFilter?: 'items' | 'server' | 'files'): {
     addDefaults(nodeTranslations, 'node');
     addDefaults(fileTranslations, 'file');
     addDefaults(serverSettingsTranslations, 'setting');
-    addDefaults(settingDescMap, 'setting_desc'); // Note: These keys already have DESC:: prefix in the map
+    addDefaults(settingDescMap, 'setting_desc'); 
 
-    return list.sort((a, b) => a.key.localeCompare(b.key));
+    // Sort: Customs first (by priorityIndex), then defaults by key
+    return list.sort((a, b) => {
+        if (a.isCustom && b.isCustom) return (a.priorityIndex ?? 0) - (b.priorityIndex ?? 0);
+        if (a.isCustom) return -1;
+        if (b.isCustom) return 1;
+        return a.key.localeCompare(b.key);
+    });
 };
 
 export const getIdsByTranslationMatch = (term: string): string[] => {

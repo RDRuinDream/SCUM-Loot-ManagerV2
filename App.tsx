@@ -88,6 +88,7 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
   const [files, setFiles] = useState<FileNode[]>([]);
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [openFiles, setOpenFiles] = useState<Record<string, string>>({}); 
   const [dirtyPaths, setDirtyPaths] = useState<string[]>([]);
   const [savedFiles, setSavedFiles] = useState<Record<string, string>>({}); 
@@ -544,32 +545,26 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
   const toggleAutoSave = () => { const newVal = !autoSave; setAutoSave(newVal); localStorage.setItem('scum_autosave', String(newVal)); };
   const [referencedPaths, setReferencedPaths] = useState<string[]>([]);
 
-  const handleMoveNode = async (sourcePath: string, targetPath: string) => {
+  const handleMoveNodes = async (sourcePaths: string[], targetPath: string) => {
       if (!dirHandle) return;
-      
-      const sourceNode = findFileNode(files, sourcePath);
       const targetNode = findFileNode(files, targetPath);
-      
-      if (sourceNode && targetNode && targetNode.kind === 'directory') {
+      if (!targetNode || targetNode.kind !== 'directory') return;
+
+      setToastMsg({ msg: t('common.processing'), type: 'info' });
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const sourcePath of sourcePaths) {
+          const sourceNode = findFileNode(files, sourcePath);
+          if (!sourceNode) continue;
+
           const srcDirParts = sourcePath.split('/');
           srcDirParts.pop();
           const srcDirPath = srcDirParts.join('/');
           const srcDirNode = srcDirPath ? findFileNode(files, srcDirPath) : { handle: dirHandle };
-          
+
           if (srcDirNode) {
-              if (srcDirPath === targetPath) { return; }
-
-              if (sourceNode.kind === 'file') {
-                  const destFilePath = `${targetPath}/${sourceNode.name}`;
-                  const exists = findFileNode(files, destFilePath);
-                  if (exists) {
-                      if (!confirm(t('common.confirmOverwrite', [sourceNode.name]))) {
-                          return;
-                      }
-                  }
-              }
-
-              setToastMsg({ msg: t('common.processing'), type: 'info' });
+              if (srcDirPath === targetPath) continue;
 
               try {
                   if (sourceNode.kind === 'file') {
@@ -579,6 +574,9 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                           const content = openFiles[sourcePath];
                           setOpenFiles(prev => { const n = {...prev}; delete n[sourcePath]; n[newPath] = content; return n; });
                           if (selectedPath === sourcePath) setSelectedPath(newPath);
+                          if (selectedPaths.includes(sourcePath)) {
+                              setSelectedPaths(prev => prev.map(p => p === sourcePath ? newPath : p));
+                          }
                       }
                   } else {
                       await moveDirectory(srcDirNode.handle as any, targetNode.handle as any, sourceNode.name);
@@ -590,35 +588,58 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                               return n;
                           });
                           if (selectedPath && selectedPath.startsWith(sourcePath + '/')) setSelectedPath(null);
+                          setSelectedPaths(prev => prev.filter(p => !p.startsWith(sourcePath + '/')));
                       }
                   }
-                  await refreshFiles();
-                  setToastMsg({ msg: "Moved successfully", type: 'success' });
-              } catch(e: any) { 
+                  successCount++;
+              } catch (e) {
                   console.error(e);
-                  setToastMsg({ msg: "Move failed: " + e.message, type: 'error' }); 
+                  failCount++;
               }
           }
       }
+
+      await refreshFiles();
+      if (failCount === 0) {
+          setToastMsg({ msg: `Successfully moved ${successCount} items`, type: 'success' });
+      } else {
+          setToastMsg({ msg: `Moved ${successCount} items, ${failCount} failed`, type: 'info' });
+      }
   };
 
-  const handleDeleteNode = async (path: string, kind: 'file' | 'directory') => {
+  const handleDeleteNodes = async (paths: string[]) => {
       if (!dirHandle) return;
-      const parentParts = path.split('/');
-      parentParts.pop();
-      const parentPath = parentParts.join('/');
-      const parentNode = parentPath ? findFileNode(files, parentPath) : { handle: dirHandle };
-      const name = path.split('/').pop() || "";
+      setToastMsg({ msg: t('common.processing'), type: 'info' });
+      let successCount = 0;
+      let failCount = 0;
 
-      if (parentNode) {
-          try {
-              await deleteEntry(parentNode.handle as any, name);
-              if (selectedPath === path || (kind === 'directory' && selectedPath?.startsWith(path + '/'))) {
-                  setSelectedPath(null);
+      for (const path of paths) {
+          const parentParts = path.split('/');
+          parentParts.pop();
+          const parentPath = parentParts.join('/');
+          const parentNode = parentPath ? findFileNode(files, parentPath) : { handle: dirHandle };
+          const name = path.split('/').pop() || "";
+          const node = findFileNode(files, path);
+
+          if (parentNode) {
+              try {
+                  await deleteEntry(parentNode.handle as any, name);
+                  if (selectedPath === path || (node?.kind === 'directory' && selectedPath?.startsWith(path + '/'))) {
+                      setSelectedPath(null);
+                  }
+                  successCount++;
+              } catch (e) {
+                  failCount++;
               }
-              await refreshFiles();
-              setToastMsg({ msg: "Deleted successfully", type: 'success' });
-          } catch(e) { setToastMsg({ msg: "Delete failed", type: 'error' }); }
+          }
+      }
+
+      setSelectedPaths(prev => prev.filter(p => !paths.includes(p)));
+      await refreshFiles();
+      if (failCount === 0) {
+          setToastMsg({ msg: `Successfully deleted ${successCount} items`, type: 'success' });
+      } else {
+          setToastMsg({ msg: `Deleted ${successCount} items, ${failCount} failed`, type: 'info' });
       }
   };
 
@@ -1053,6 +1074,8 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                         nodes={files} 
                         onSelectFile={handleSelectFile} 
                         selectedPath={selectedPath} 
+                        selectedPaths={selectedPaths}
+                        onSelectPaths={setSelectedPaths}
                         onRefresh={refreshFiles}
                         dependencyMap={dependencyMap}
                         highlightedPath={highlightedPath}
@@ -1062,8 +1085,8 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
                         conflicts={conflicts}
                         onNavigate={handleNavigateByPath}
                         onPeekFile={handlePeekFile}
-                        onMoveNode={handleMoveNode}
-                        onDeleteNode={handleDeleteNode}
+                        onMoveNodes={handleMoveNodes}
+                        onDeleteNodes={handleDeleteNodes}
                         onRenameNode={handleRenameNode}
                         onCreateFolder={handleCreateFolder}
                         onCreateFile={handleCreateFile}
@@ -1073,8 +1096,8 @@ const AppContent = ({ onLogout }: { onLogout: () => void }) => {
              </div>
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0 relative bg-[#02040a]/80 backdrop-blur-sm">
-             <div className="h-14 border-b border-scum-700/30 bg-[#0f172a]/90 backdrop-blur-xl flex items-center justify-between px-6 shrink-0 z-30 shadow-lg">
+        <div className="flex-1 flex flex-col min-w-0 relative bg-[#02040a]/80 backdrop-blur-sm rounded-tl-2xl overflow-hidden">
+             <div className="h-14 border-b border-scum-700/30 bg-[#0f172a]/90 backdrop-blur-xl flex items-center justify-between px-6 shrink-0 z-30 shadow-lg rounded-tl-2xl">
                  <div className="flex items-center gap-4 min-w-0">
                      <span className={`font-mono text-sm whitespace-nowrap truncate transition-colors ${selectedPath ? 'text-scum-accent font-bold drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]' : 'text-gray-500'}`} title={selectedPath || ""}>
                          {selectedPath ? selectedPath.split('/').pop() : t('app.title')}

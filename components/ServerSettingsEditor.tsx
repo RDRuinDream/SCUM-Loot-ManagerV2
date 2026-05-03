@@ -171,8 +171,8 @@ export const ServerSettingsEditor: React.FC<ServerSettingsEditorProps> = ({ cont
                                 onClick={() => toggleSection(section)}
                             >
                                 <div className="flex items-center gap-2">
-                                    <span className={`transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`}>
-                                        <ChevronDown className="w-4 h-4 opacity-50 group-hover:opacity-100" />
+                                    <span className={`transition-transform duration-200 ${isCollapsed ? 'rotate-0' : 'rotate-90'}`}>
+                                        <ChevronRight className="w-4 h-4 opacity-50 group-hover:opacity-100" />
                                     </span>
                                     <div className="flex flex-col">
                                         <span className={`text-sm font-bold uppercase tracking-widest ${colorClass.split(' ')[0]}`}>

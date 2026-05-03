@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { stringToColor } from '../utils/helpers';
 import { useI18n } from '../i18n';
 import { getItemTranslation, hasTranslation } from '../utils/itemTranslator';
-import { ChevronDown } from './Icons';
+import { ChevronRight } from './Icons';
 
 interface RarityBarChartProps {
     stats: { id: string, percent: number }[];
@@ -82,9 +82,9 @@ export const RarityBarChart: React.FC<RarityBarChartProps> = ({ stats, onItemCli
                     className="self-center flex items-center gap-1.5 px-3 py-1.5 bg-black/20 hover:bg-black/40 text-gray-500 hover:text-white rounded-full text-xs transition-all border border-white/5 hover:border-white/10"
                  >
                      {isExpanded ? (
-                         <>{t('stats.collapse')} <ChevronDown className="w-3 h-3 rotate-180" /></>
+                         <>{t('stats.collapse')} <ChevronRight className="w-3 h-3 rotate-90" /></>
                      ) : (
-                         <>{t('stats.showMore', [hiddenCount])} <ChevronDown className="w-3 h-3" /></>
+                         <>{t('stats.showMore', [hiddenCount])} <ChevronRight className="w-3 h-3 rotate-0" /></>
                      )}
                  </button>
              )}
