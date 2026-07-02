@@ -29,7 +29,7 @@ import { subscribeToTranslationUpdates } from './utils/itemTranslator';
 import { CommandPalette } from './components/CommandPalette';
 import { useAppStore } from './src/store';
 
-const MAP_IMAGE_URL = 'https://raw.githubusercontent.com/LXHuiMeng/SCUMMap/main/Img/scummap.webp';
+const MAP_IMAGE_URL = 'https://github.com/RDRuinDream/SCUMMap/tree/main/Img/scummap.webp';
 
 const AuthWrapper = () => {
   const { t } = useI18n();
